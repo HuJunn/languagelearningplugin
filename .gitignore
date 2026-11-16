@@ -1,0 +1,13 @@
+# Dependencies & build caches
+**/node_modules/
+**/.output/
+**/.wxt/
+**/dict-src/
+*.log
+
+# Private signing keys (keep local only)
+**/.crx-key.pem
+
+# Keep prebuilt release packages tracked under /releases
+!releases/
+!releases/**
