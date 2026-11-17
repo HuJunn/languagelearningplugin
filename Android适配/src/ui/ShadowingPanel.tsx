@@ -1102,6 +1102,11 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                 </button>
               )}
             </div>
+            {updateInfo?.hasUpdate && updateInfo.platform === 'android' && (
+              <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sh-muted)' }}>
+                提示：安卓 Edge Canary 不支持后台静默更新，点上方下载新 `.crx` 后到「设置 → 开发者选项 → Extension install by .crx」覆盖安装即可（生词本会保留）。
+              </div>
+            )}
           </div>
         )}
 

@@ -51,6 +51,7 @@ export default defineContentScript({
         const v = u.searchParams.get('v') || '';
         const kind = u.searchParams.get('kind') || 'manual';
         const lang = u.searchParams.get('lang') || 'en';
+        const hasTlang = u.searchParams.has('tlang');
         const pot = u.searchParams.get('pot');
         if (v) {
           const params: Record<string, string> = {};
@@ -59,10 +60,12 @@ export default defineContentScript({
             if (val) params[k] = val;
           }
           if (pot || !potByVideo.has(v)) {
-            potByVideo.set(v, { url: u.toString(), params });
+            const cleanUrl = new URL(u.toString());
+            cleanUrl.searchParams.delete('tlang');
+            potByVideo.set(v, { url: cleanUrl.toString(), params });
           }
         }
-        if (v && bodyText && bodyText.trim().length > 10) {
+        if (!hasTlang && v && bodyText && bodyText.trim().length > 10) {
           const trimmed = bodyText.trim();
           const key = cacheKey(v, kind, lang);
           if (trimmed.startsWith('{')) {
@@ -216,38 +219,43 @@ export default defineContentScript({
         clearTimeout(timer);
         if (!resp.ok) return null;
         const html = await resp.text();
-        const marker = 'ytInitialPlayerResponse = ';
-        const idx = html.indexOf(marker);
-        if (idx < 0) return null;
-        const start = html.indexOf('{', idx + marker.length);
-        if (start < 0) return null;
-        let depth = 0;
-        let inStr = false;
-        let esc = false;
-        let end = -1;
-        for (let i = start; i < html.length; i++) {
-          const ch = html[i];
-          if (inStr) {
-            if (esc) esc = false;
-            else if (ch === '\\') esc = true;
-            else if (ch === '"') inStr = false;
-          } else {
-            if (ch === '"') inStr = true;
-            else if (ch === '{') depth++;
-            else if (ch === '}') {
-              depth--;
-              if (depth === 0) {
-                end = i + 1;
-                break;
+        // 兼容 m.youtube.com：移动端 HTML 前面先出现 ytInitialPlayerResponse = null; 后面才是真正的 {...}
+        const re = /ytInitialPlayerResponse\s*=\s*\{/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(html))) {
+          const start = m.index + m[0].length - 1;
+          let depth = 0;
+          let inStr = false;
+          let esc = false;
+          let end = -1;
+          for (let i = start; i < html.length; i++) {
+            const ch = html[i];
+            if (inStr) {
+              if (esc) esc = false;
+              else if (ch === '\\') esc = true;
+              else if (ch === '"') inStr = false;
+            } else {
+              if (ch === '"') inStr = true;
+              else if (ch === '{') depth++;
+              else if (ch === '}') {
+                depth--;
+                if (depth === 0) {
+                  end = i + 1;
+                  break;
+                }
               }
             }
           }
-        }
-        if (end < 0) return null;
-        const pr = JSON.parse(html.slice(start, end));
-        if (pr?.videoDetails?.videoId === videoId) {
-          recordPlayerResponse(pr);
-          return parseTracksFromPlayerResponse(pr);
+          if (end < 0) continue;
+          try {
+            const pr = JSON.parse(html.slice(start, end));
+            if (pr?.videoDetails?.videoId === videoId) {
+              recordPlayerResponse(pr);
+              return parseTracksFromPlayerResponse(pr);
+            }
+          } catch {
+            // try next match
+          }
         }
       } catch {
         // ignore
@@ -295,6 +303,7 @@ export default defineContentScript({
             const pKind = pu.searchParams.get('kind') || 'manual';
             const pLang = pu.searchParams.get('lang') || '';
             if (pu.searchParams.get('v') === videoId && pKind === kind && pLang === track.languageCode) {
+              pu.searchParams.delete('tlang');
               pu.searchParams.set('fmt', fmt);
               return pu.toString();
             }
@@ -350,12 +359,30 @@ export default defineContentScript({
       return findCapturedForTrack(videoId, track);
     }
 
+    function findCaptionButton(): HTMLButtonElement | null {
+      return document.querySelector<HTMLButtonElement>(
+        '#movie_player .ytp-subtitles-button, ' +
+          'ytm-closed-captioning-button button, ' +
+          '.ytmClosedCaptioningButtonButton, ' +
+          'yt-closed-captions-toggle-button button',
+      );
+    }
+
     /** 唤醒播放器字幕模块触发带 PoToken 的请求，最多等待 4 秒直到捕获到 pot 或字幕载荷 */
     async function nudgePlayerCaptions(videoId: string, preferredLang?: string): Promise<void> {
       const player = getPlayer();
-      const btn =
-        document.querySelector<HTMLButtonElement>('#movie_player .ytp-subtitles-button') ||
-        document.querySelector<HTMLButtonElement>('.ytm-closed-captioning-button');
+      let btn = findCaptionButton();
+
+      // 移动端 m.youtube.com 的控制栏未唤醒时，CC 按钮可能还没挂载，先轻触播放器容器
+      if (!btn && location.hostname === 'm.youtube.com') {
+        const overlay = document.querySelector<HTMLElement>(
+          '#player-control-overlay, .player-controls-content, #movie_player video',
+        );
+        overlay?.click();
+        await new Promise((r) => setTimeout(r, 180));
+        btn = findCaptionButton();
+      }
+
       const wasPressed = btn?.getAttribute('aria-pressed') === 'true';
 
       try {
@@ -369,15 +396,16 @@ export default defineContentScript({
 
       if (btn && !wasPressed) {
         btn.click();
-      } else if (!btn) {
+      } else {
         try {
           player?.toggleSubtitlesOn?.();
+          if (!btn && !wasPressed) player?.toggleSubtitles?.();
         } catch {
           // ignore
         }
       }
 
-      const deadline = Date.now() + 4000;
+      const deadline = Date.now() + 4200;
       while (Date.now() < deadline) {
         if (getVideoIdFromLocation() !== videoId) break;
         const hasCapturedPayload = Array.from(capturedPayloads.keys()).some((k) => k.startsWith(`${videoId}:`));
@@ -389,6 +417,7 @@ export default defineContentScript({
       }
 
       // 恢复用户原本的 CC 关闭状态
+      btn = findCaptionButton();
       if (btn && !wasPressed && btn.getAttribute('aria-pressed') === 'true') {
         btn.click();
       }
