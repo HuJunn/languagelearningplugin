@@ -11,6 +11,7 @@ import {
 import { writeVocabToLocalObsidianFile } from '../core/file-handle';
 import { findSentenceAt, findSentenceBefore } from '../core/segment';
 import { translateSentencesBatch, translateWordOnline } from '../core/translate';
+import type { UpdateCheckResult } from '../core/version';
 import type { DictEntry, Sentence, Transcript, VideoVocab, VocabItem, Word } from '../core/types';
 
 export interface ShadowingPanelProps {
@@ -96,6 +97,22 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   const [calibInput, setCalibInput] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
+  const currentVersion = useMemo(() => {
+    try {
+      return chrome?.runtime?.getManifest?.()?.version || '0.1.2';
+    } catch {
+      return '0.1.2';
+    }
+  }, []);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(() => {
+    const cached = loadJson<{ checkedAt: number; result: UpdateCheckResult } | null>('sh_update_check', null);
+    if (cached && cached.result?.currentVersion === currentVersion) {
+      return cached.result;
+    }
+    return null;
+  });
+  const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
+
   const videoId = transcript?.videoId || 'default';
   const [vocabItems, setVocabItems] = useState<VocabItem[]>(() => loadJson(`sh_vocab_${videoId}`, []));
 
@@ -131,6 +148,57 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     const t = setTimeout(() => setToastMsg(null), 2800);
     return () => clearTimeout(t);
   }, [toastMsg]);
+
+  const handleCheckUpdate = useCallback(
+    async (silent = false) => {
+      if (checkingUpdate) return;
+      if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
+        if (!silent) showToast(`当前版本 v${currentVersion}`);
+        return;
+      }
+      if (!silent) setCheckingUpdate(true);
+      try {
+        const res = (await chrome.runtime.sendMessage({ type: 'SH_CHECK_UPDATE' })) as
+          | ({ ok: true } & UpdateCheckResult)
+          | { ok: false; error?: string };
+        if (res?.ok) {
+          const info: UpdateCheckResult = {
+            currentVersion: res.currentVersion,
+            latestVersion: res.latestVersion,
+            hasUpdate: res.hasUpdate,
+            downloadUrl: res.downloadUrl,
+            repoUrl: res.repoUrl,
+            platform: res.platform,
+          };
+          setUpdateInfo(info);
+          saveJson('sh_update_check', { checkedAt: Date.now(), result: info });
+          if (!silent) {
+            showToast(
+              info.hasUpdate
+                ? `发现 GitHub 新版本 v${info.latestVersion}（当前 v${info.currentVersion}）`
+                : `当前已是最新版本 v${info.currentVersion}`,
+            );
+          }
+        } else if (!silent) {
+          showToast('检查更新失败，请确认可访问 GitHub');
+        }
+      } catch {
+        if (!silent) showToast('检查更新失败，请确认可访问 GitHub');
+      } finally {
+        if (!silent) setCheckingUpdate(false);
+      }
+    },
+    [checkingUpdate, currentVersion, showToast],
+  );
+
+  // 打开面板时静默检查 GitHub 新版本（每 6 小时最多自动请求一次）
+  useEffect(() => {
+    const cached = loadJson<{ checkedAt: number; result: UpdateCheckResult } | null>('sh_update_check', null);
+    const expired = !cached || Date.now() - cached.checkedAt > 6 * 3600 * 1000 || cached.result?.currentVersion !== currentVersion;
+    if (expired) {
+      handleCheckUpdate(true);
+    }
+  }, [currentVersion]);
 
   useEffect(() => {
     if (!popover) return;
@@ -676,6 +744,28 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
         >
           <div className="sh-title">
             <span>🗣 口语跟读</span>
+            <button
+              type="button"
+              className={`sh-ver-badge ${updateInfo?.hasUpdate ? 'sh-has-update' : ''}`}
+              onClick={() => {
+                if (updateInfo?.hasUpdate) {
+                  setDrawer('help');
+                } else {
+                  handleCheckUpdate(false);
+                }
+              }}
+              title={
+                updateInfo?.hasUpdate
+                  ? `发现 GitHub 新版本 v${updateInfo.latestVersion}！点击查看并下载`
+                  : `当前版本 v${currentVersion} · 点击检查 GitHub 新版本`
+              }
+            >
+              {checkingUpdate
+                ? '检查中...'
+                : updateInfo?.hasUpdate
+                  ? `v${currentVersion} → 🆕 v${updateInfo.latestVersion}`
+                  : `v${currentVersion}`}
+            </button>
             <span className="sh-badge" title="字幕与逐词时间来源">
               {sourceBadge}
             </span>
@@ -839,6 +929,40 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
               <div>
                 • <span className="sh-kbd">H</span>：打开 / 临时隐藏跟读窗口
               </div>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                marginTop: 10,
+                paddingTop: 8,
+                borderTop: '1px solid var(--sh-border)',
+                flexWrap: 'wrap',
+              }}
+            >
+              <span>
+                当前版本：<b>v{currentVersion}</b>
+                {updateInfo && (
+                  <span style={{ color: updateInfo.hasUpdate ? 'var(--sh-success)' : 'var(--sh-muted)', marginLeft: 8 }}>
+                    {updateInfo.hasUpdate
+                      ? `发现 GitHub 新版本 v${updateInfo.latestVersion}`
+                      : `（已是 GitHub 最新版 v${updateInfo.latestVersion}）`}
+                  </span>
+                )}
+              </span>
+              <div className="sh-spacer" />
+              <button className="sh-btn" onClick={() => handleCheckUpdate(false)} disabled={checkingUpdate}>
+                {checkingUpdate ? '正在检查...' : '🔄 检查 GitHub 新版本'}
+              </button>
+              {updateInfo?.hasUpdate && (
+                <button
+                  className="sh-btn sh-btn-active"
+                  onClick={() => window.open(updateInfo.downloadUrl, '_blank')}
+                >
+                  ⬇ 下载 v{updateInfo.latestVersion}
+                </button>
+              )}
             </div>
           </div>
         )}

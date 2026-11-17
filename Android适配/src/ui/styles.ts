@@ -87,6 +87,30 @@ export const PANEL_CSS = `
   white-space: nowrap;
 }
 
+.sh-ver-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--sh-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--sh-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.sh-ver-badge:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--sh-text);
+}
+
+.sh-ver-badge.sh-has-update {
+  background: rgba(52, 211, 153, 0.18);
+  border-color: rgba(52, 211, 153, 0.55);
+  color: var(--sh-success);
+  font-weight: 600;
+}
+
 .sh-spacer {
   flex: 1;
   min-width: 4px;

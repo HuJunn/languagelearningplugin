@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import { lookupOfflineDict, CompactDict } from '../dict';
 import { formatVideoVocabSection, mergeVocabIntoMarkdown, OBSIDIAN_OPEN_URI } from '../obsidian';
+import { compareSemver, parseAndroidUpdatesXml } from '../version';
 
 const dict: CompactDict = JSON.parse(fs.readFileSync('public/dict.json', 'utf8'));
 
@@ -98,5 +99,18 @@ describe('Obsidian vocabulary markdown formatter & merger', () => {
     expect(md3).toContain('## [I Opened A FREE Carwash](https://www.youtube.com/watch?v=nJs7YXLYu0A)');
     expect(md3).toContain('## [Another Video](https://www.youtube.com/watch?v=abc123xyz)');
     expect(formatVideoVocabSection(v2)).toContain('https://www.youtube.com/watch?v=abc123xyz&t=12s');
+  });
+});
+
+describe('Version comparison & GitHub updates.xml parser', () => {
+  it('compares semver strings and parses Android updates.xml', () => {
+    expect(compareSemver('0.1.2', '0.1.1')).toBe(1);
+    expect(compareSemver('0.1.2', '0.1.2')).toBe(0);
+    expect(compareSemver('0.1.1', '0.2.0')).toBe(-1);
+
+    const parsed = parseAndroidUpdatesXml(
+      "<gupdate><app appid='abc'><updatecheck codebase='https://example.com/a.crx' version='0.1.2' /></app></gupdate>",
+    );
+    expect(parsed).toEqual({ version: '0.1.2', codebase: 'https://example.com/a.crx' });
   });
 });

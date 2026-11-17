@@ -13,6 +13,7 @@ export default defineConfig({
       'https://edge.microsoft.com/*',
       'https://api-edge.cognitive.microsofttranslator.com/*',
       'https://translate.googleapis.com/*',
+      'https://raw.githubusercontent.com/*',
     ],
     action: { default_title: '显示 / 隐藏跟读面板' },
     web_accessible_resources: [
