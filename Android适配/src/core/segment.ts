@@ -82,24 +82,29 @@ export function segmentSentences(words: Word[], opts: SegmentOptions = {}): Sent
     words: ws,
     text: ws.map((w) => w.text).join(' '),
   }));
-  // 句尾留一点余量，便于"读完暂停"不截掉尾音，但严格与下一句开头保持至少 40ms 安全间隔，防止跳入下一句
+  // 首句开头严格等于第一个词的起点 (ws[0].start)；
+  // 句尾留足自然收尾余量（+0.20s，允许连读时稍微带出下一句开头一点声音，不提前截断尾音）
   for (let i = 0; i < sentences.length; i++) {
+    const lastWordEnd = sentences[i].words[sentences[i].words.length - 1].end;
     const nextStart = sentences[i + 1]?.start ?? Infinity;
-    const safeLimit = Number.isFinite(nextStart) ? Math.max(sentences[i].start + 0.05, nextStart - 0.04) : Infinity;
-    sentences[i].end = Math.min(safeLimit, sentences[i].end + 0.18);
+    const minTail = lastWordEnd + 0.16;
+    const maxTail = Math.min(nextStart + 0.16, lastWordEnd + 0.28);
+    sentences[i].end = Math.max(minTail, maxTail);
   }
   return sentences;
 }
 
-/** 二分查找：time 所在的句子下标；在两句之间返回 -1 */
+/** 二分查找：time 所在的句子下标；若两句句尾余量与下句开头重叠，优先归属已经开始的下一句 */
 export function findSentenceAt(sentences: Sentence[], time: number): number {
   let lo = 0;
   let hi = sentences.length - 1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
     const s = sentences[mid];
+    const nextStart = sentences[mid + 1]?.start ?? Infinity;
+    const effectiveEnd = Math.min(s.end, nextStart);
     if (time < s.start) hi = mid - 1;
-    else if (time >= s.end) lo = mid + 1;
+    else if (time >= effectiveEnd) lo = mid + 1;
     else return mid;
   }
   return -1;

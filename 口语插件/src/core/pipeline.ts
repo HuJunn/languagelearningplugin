@@ -1,5 +1,12 @@
 import type { CaptionTrack, Cue, Transcript, Word } from './types';
-import { interpolateCue, Json3, parseAsrJson3, parseCuesJson3, parseTimedTextXml } from './captions';
+import {
+  interpolateCue,
+  Json3,
+  parseAsrJson3,
+  parseAsrTimedTextXml,
+  parseCuesJson3,
+  parseTimedTextXml,
+} from './captions';
 import { alignManualToAsr } from './align';
 import { segmentSentences, SegmentOptions } from './segment';
 
@@ -25,7 +32,11 @@ export interface BuildTranscriptInput {
 export function buildTranscript(input: BuildTranscriptInput): Transcript {
   const { videoId, asrJson3, manualJson3, manualXml, asrXml, customManualCues, segmentOptions } = input;
 
-  const asrWords: Word[] = asrJson3 ? parseAsrJson3(asrJson3) : [];
+  const asrWords: Word[] = asrJson3
+    ? parseAsrJson3(asrJson3)
+    : asrXml
+      ? parseAsrTimedTextXml(asrXml)
+      : [];
   let manualCues: Cue[] = [];
   if (customManualCues && customManualCues.length > 0) {
     manualCues = customManualCues;

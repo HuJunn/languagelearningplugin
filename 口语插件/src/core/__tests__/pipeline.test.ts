@@ -7,6 +7,8 @@ import { findSentenceAt, findSentenceBefore } from '../segment';
 
 const SUB_PATH =
   'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\nJs7YXLYu0A.en.json3';
+const THEATER_SUB_PATH =
+  'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\X3WjbiXyu8Y.en.json3';
 const CLIPPING_PATH = 'E:\\CODEX\\codex-obsidian\\Clippings\\I Opened A FREE Carwash.md';
 
 describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', () => {
@@ -42,10 +44,11 @@ describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', ()
     expect(idx).toBe(2);
     expect(findSentenceBefore(tr.sentences, tr.sentences[2].start + 0.05)).toBe(2);
 
-    // Ensure sentence[i].end never overlaps or equals sentence[i+1].start (prevents auto-pause jumping to next sentence)
-    for (let i = 0; i < tr.sentences.length - 1; i++) {
-      expect(tr.sentences[i].end).toBeLessThan(tr.sentences[i + 1].start);
-      expect(findSentenceAt(tr.sentences, tr.sentences[i].end)).not.toBe(i + 1);
+    // Ensure every sentence starts strictly at its first word's timestamp and has a natural tail pad
+    for (let i = 0; i < tr.sentences.length; i++) {
+      const s = tr.sentences[i];
+      expect(s.start).toBe(s.words[0].start);
+      expect(s.end).toBeGreaterThanOrEqual(s.words[s.words.length - 1].end + 0.15);
     }
   });
 
@@ -95,5 +98,41 @@ describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', ()
     const fixedSentence = tr.sentences.find((s) => s.text.includes('Let me call my boss'));
     expect(fixedSentence).toBeDefined();
     expect(fixedSentence!.words.some((w) => w.timing === 'asr')).toBe(true);
+  });
+
+  it('preserves exact first-word start time on X3WjbiXyu8Y around 50s ("We have one theater fully rented out...") for both json3 and srv3 XML', () => {
+    const rawJson3 = JSON.parse(fs.readFileSync(THEATER_SUB_PATH, 'utf8'));
+    const trJson3 = buildTranscript({ videoId: 'X3WjbiXyu8Y', asrJson3: rawJson3 });
+    const sent1 = trJson3.sentences.find((s) => s.text.startsWith('We have one theater fully rented out'));
+    expect(sent1).toBeDefined();
+    // "We" must start at ~50.52s, strictly before "fully" at 51.40s
+    expect(sent1!.start).toBeCloseTo(50.52, 2);
+    expect(sent1!.words[0].text).toBe('We');
+    expect(sent1!.words[0].start).toBeCloseTo(50.52, 2);
+    const fullyWord1 = sent1!.words.find((w) => w.text === 'fully')!;
+    expect(fullyWord1.start).toBeCloseTo(51.4, 2);
+    expect(sent1!.words[0].start).toBeLessThan(fullyWord1.start - 0.8);
+
+    // Also test srv3 XML (both with <s> tags and fallback without <s> tags)
+    const srv3WithS = `<?xml version="1.0" encoding="utf-8" ?><timedtext format="3"><body>
+      <p t="48080" d="3320" w="1">&gt;&gt; So,<s t="360"> what</s><s t="640"> what</s><s t="840"> Let&#39;s</s><s t="1040"> I</s><s t="1080"> guess</s><s t="1240"> let&#39;s</s></p>
+      <p t="49560" d="4360" w="1">discuss<s t="360"> the</s><s t="480"> plan.</s><s t="960"> We</s><s t="1080"> have</s><s t="1240"> one</s><s t="1400"> theater</s></p>
+      <p t="51400" d="4040" w="1">fully<s t="320"> rented</s><s t="640"> out</s><s t="800"> right</s><s t="1000"> now</s><s t="1720"> plus</s><s t="2080"> the</s><s t="2240"> gift</s></p>
+      <p t="53920" d="2600" w="1">cards<s t="360"> that</s><s t="560"> you</s><s t="720"> have,</s><s t="960"> right?</s></p>
+    </body></timedtext>`;
+    const trSrv3 = buildTranscript({ videoId: 'X3WjbiXyu8Y', asrXml: srv3WithS });
+    expect(trSrv3.source).toBe('asr');
+    const sent2 = trSrv3.sentences.find((s) => s.text.startsWith('We have one theater fully rented out'))!;
+    expect(sent2).toBeDefined();
+    expect(sent2.start).toBeCloseTo(50.52, 2);
+    expect(sent2.words.find((w) => w.text === 'fully')!.start).toBeCloseTo(51.4, 2);
+
+    // Fallback plain XML (no <s> tags, overlapping durations d=4360 and t=51400)
+    const plainXml = srv3WithS.replace(/<\/?s[^>]*>/g, '');
+    const trPlain = buildTranscript({ videoId: 'X3WjbiXyu8Y', asrXml: plainXml });
+    const sent3 = trPlain.sentences.find((s) => s.text.startsWith('We have one theater fully rented out'))!;
+    expect(sent3).toBeDefined();
+    // Because overlapping cue durations are truncated at next cue start (51.40s), "We" is strictly before "fully" (51.40s)
+    expect(sent3.words[0].start).toBeLessThan(sent3.words.find((w) => w.text === 'fully')!.start);
   });
 });

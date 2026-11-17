@@ -18,6 +18,7 @@ export default defineContentScript({
   runAt: 'document_start',
   main() {
     let lastPotParams: Record<string, string> = {};
+    let lastPlayerTimedTextUrl = '';
     const capturedPayloads = new Map<string, { json3?: Json3; xml?: string }>();
     let activeVideoId = '';
     let fetchingVideoId = '';
@@ -35,11 +36,14 @@ export default defineContentScript({
         const lang = u.searchParams.get('lang') || 'en';
         const pot = u.searchParams.get('pot');
         if (pot) {
+          lastPlayerTimedTextUrl = u.toString();
           lastPotParams = {};
-          for (const k of ['pot', 'c', 'cver', 'potc']) {
+          for (const k of ['pot', 'c', 'cver', 'potc', 'xoaf', 'xowf', 'xospf']) {
             const val = u.searchParams.get(k);
             if (val) lastPotParams[k] = val;
           }
+        } else if (v) {
+          lastPlayerTimedTextUrl = u.toString();
         }
         if (v && bodyText && bodyText.trim().length > 10) {
           const trimmed = bodyText.trim();
@@ -158,6 +162,20 @@ export default defineContentScript({
       if (cached?.json3) return cached;
 
       const buildUrl = (fmt: string) => {
+        // 如果播放器已经发过同视频同轨的签名请求，直接复用该完整 URL 仅替换 fmt，避免签名/参数不匹配
+        if (lastPlayerTimedTextUrl) {
+          try {
+            const pu = new URL(lastPlayerTimedTextUrl, location.origin);
+            const pKind = pu.searchParams.get('kind') || 'manual';
+            const pLang = pu.searchParams.get('lang') || '';
+            if (pu.searchParams.get('v') === videoId && pKind === kind && pLang === track.languageCode) {
+              pu.searchParams.set('fmt', fmt);
+              return pu.toString();
+            }
+          } catch {
+            // ignore
+          }
+        }
         const u = new URL(track.baseUrl, location.origin);
         u.searchParams.set('fmt', fmt);
         for (const [k, v] of Object.entries(lastPotParams)) {

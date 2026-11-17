@@ -117,7 +117,87 @@ export function interpolateCue(cue: Cue, tokens = tokenizeCueText(cue.text)): Wo
   });
 }
 
-/** 解析 YouTube srv3 / timedtext XML（播放器没用 json3 时的兜底） */
+/** 解析 YouTube srv3 / timedtext XML：若含 <s> 逐词偏移标签则直接提取逐词时间 */
+export function parseAsrTimedTextXml(xml: string): Word[] {
+  const decode = (s: string) =>
+    s
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n));
+
+  type Raw = { text: string; start: number; eventEnd: number };
+  const segs: Raw[] = [];
+  const reP = /<p\b([^>]*)>([\s\S]*?)<\/p>/g;
+  let m: RegExpExecArray | null;
+  let hasS = false;
+
+  while ((m = reP.exec(xml))) {
+    const attrs = m[1];
+    const body = m[2];
+    if (/\ba="1"/.test(attrs)) continue;
+    const tMatch = /\bt="(\d+)"/.exec(attrs);
+    if (!tMatch) continue;
+    const dMatch = /\bd="(\d+)"/.exec(attrs);
+    const t0 = +tMatch[1] / 1000;
+    const evEnd = t0 + (dMatch ? +dMatch[1] / 1000 : 2.5);
+
+    if (/<s\b/.test(body)) {
+      hasS = true;
+      const firstS = body.indexOf('<s');
+      const headText = decode(body.slice(0, firstS)).replace(/\n/g, ' ');
+      if (headText.trim()) {
+        segs.push({ text: headText, start: t0, eventEnd: evEnd });
+      }
+      const reS = /<s\b([^>]*)>([\s\S]*?)<\/s>/g;
+      let sm: RegExpExecArray | null;
+      while ((sm = reS.exec(body))) {
+        const sAttrs = sm[1];
+        const sText = decode(sm[2]).replace(/\n/g, ' ');
+        if (!sText.trim()) continue;
+        const offMatch = /\bt="(\d+)"/.exec(sAttrs);
+        const offset = offMatch ? +offMatch[1] / 1000 : 0;
+        segs.push({ text: sText, start: t0 + offset, eventEnd: evEnd });
+      }
+    } else {
+      const plain = decode(body.replace(/<[^>]+>/g, '')).replace(/\n/g, ' ');
+      if (plain.trim()) {
+        segs.push({ text: plain, start: t0, eventEnd: evEnd });
+      }
+    }
+  }
+
+  if (!hasS || !segs.length) return [];
+  segs.sort((a, b) => a.start - b.start);
+
+  const words: Word[] = [];
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    const next = segs[i + 1];
+    const segEnd = next ? Math.min(next.start, seg.eventEnd) : seg.eventEnd;
+    const parts = seg.text.trim().split(/\s+/).filter((p) => !isNonSpeech(p));
+    if (!parts.length) continue;
+    const total = parts.reduce((a, p) => a + p.length, 0);
+    let t = seg.start;
+    const span = Math.max(0.05, segEnd - seg.start);
+    for (const p of parts) {
+      const d = parts.length === 1 ? span : (span * p.length) / total;
+      words.push({ text: p, start: t, end: t + d, timing: 'asr' });
+      t += d;
+    }
+  }
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const nextStart = words[i + 1]?.start ?? Infinity;
+    w.end = Math.min(nextStart, w.start + estimateWordDuration(w.text), Math.max(w.end, w.start + 0.05));
+    if (w.end <= w.start) w.end = w.start + 0.05;
+  }
+  return words;
+}
+
+/** 解析 YouTube srv3 / timedtext XML（只有行级时间时的兜底，自动截断重叠行避免时间戳倒置） */
 export function parseTimedTextXml(xml: string): Cue[] {
   const cues: Cue[] = [];
   const decode = (s: string) =>
@@ -140,6 +220,13 @@ export function parseTimedTextXml(xml: string): Cue[] {
     while ((m = reT.exec(xml))) {
       const text = decode(decode(m[3])).replace(/\s+/g, ' ').trim();
       if (text) cues.push({ start: +m[1], end: +m[1] + +(m[2] ?? 0), text });
+    }
+  }
+  cues.sort((a, b) => a.start - b.start);
+  // 截断与下一行重叠的显示时长，防止上一行末尾词插值到下一行开头词之后
+  for (let i = 0; i < cues.length - 1; i++) {
+    if (cues[i].end > cues[i + 1].start) {
+      cues[i].end = Math.max(cues[i].start + 0.15, cues[i + 1].start);
     }
   }
   return cues;

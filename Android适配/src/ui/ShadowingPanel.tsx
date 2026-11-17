@@ -190,7 +190,9 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       lastCompletedIdxRef.current = null;
       pinnedIdxRef.current = index;
       stopTargetRef.current = autoPauseRef.current ? { idx: index, time: sent.end } : null;
-      video.currentTime = Math.max(0, sent.start + 0.005);
+      // 首句开头精准裁切：从第一个单词起点提前 80ms 预卷，消除解码延迟与连读吞字，确保完整听到第一个词
+      const firstWordStart = sent.words[0]?.start ?? sent.start;
+      video.currentTime = Math.max(0, firstWordStart - 0.08);
       video.play().catch(() => {});
       setActiveIdx(index);
       activeIdxRef.current = index;
@@ -215,41 +217,52 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
           autoPausedIdxRef.current = null;
         }
 
-        // 2. 检查是否到达本句末尾需要自动暂停（提前 20ms 触发，并严格锁定在本句）
+        // 2. 检查是否到达本句末尾需要自动暂停（使用句尾自然收尾余量，并严格锁定在本句）
         const stopTarget = stopTargetRef.current;
-        if (autoPauseRef.current && stopTarget != null && !video.paused && t >= stopTarget.time - 0.02) {
+        if (autoPauseRef.current && stopTarget != null && !video.paused && t >= stopTarget.time) {
           const pausedIdx = stopTarget.idx;
           stopTargetRef.current = null;
           pinnedIdxRef.current = pausedIdx;
           autoPausedIdxRef.current = pausedIdx;
           lastCompletedIdxRef.current = pausedIdx;
           video.pause();
-          // 仅当因为帧延迟导致时间已经越过下一句起点时，才回退到本句末尾，绝不把时间往后推入下一句
-          const nextStart = sentences[pausedIdx + 1]?.start ?? Infinity;
-          if (t >= nextStart - 0.005) {
-            try {
-              video.currentTime = Math.max(sentences[pausedIdx].start, stopTarget.time - 0.02);
-            } catch {
-              // ignore
-            }
-          }
         }
 
         // 3. 若暂停期间用户手动拖动了视频进度条到远处，解除旧锁定句
         if (video.paused && pinnedIdxRef.current != null) {
           const pSent = sentences[pinnedIdxRef.current];
           const nextStart = sentences[pinnedIdxRef.current + 1]?.start ?? pSent.end + 0.5;
-          if (pSent && (t < pSent.start - 0.35 || t > nextStart + 0.45)) {
+          if (pSent && (t < pSent.start - 0.35 || t > Math.max(pSent.end, nextStart) + 0.45)) {
             pinnedIdxRef.current = null;
             autoPausedIdxRef.current = null;
             lastCompletedIdxRef.current = null;
           }
         }
 
-        // 4. 确定当前激活句子下标：暂停且存在锁定句时无条件锁定在本句，防止跳到下一句
+        // 4. 确定当前激活句子下标：
+        //    - 暂停且存在锁定句时无条件锁定在本句；
+        //    - 处于跳句开头的 80ms 预卷区间或句尾连读余量区间时，保持锁定在目标句
         let idx: number;
         if (video.paused && pinnedIdxRef.current != null) {
           idx = pinnedIdxRef.current;
+        } else if (
+          !video.paused &&
+          pinnedIdxRef.current != null &&
+          t >= sentences[pinnedIdxRef.current].start - 0.15 &&
+          t < sentences[pinnedIdxRef.current].start
+        ) {
+          // 处于跳句开头的 80ms 预卷区间时，保持锁定在目标句
+          idx = pinnedIdxRef.current;
+        } else if (
+          !video.paused &&
+          autoPauseRef.current &&
+          stopTargetRef.current != null &&
+          t >= sentences[stopTargetRef.current.idx].start &&
+          t <= stopTargetRef.current.time
+        ) {
+          // 开启读完暂停时，在本句收尾余量区间内保持锁定在本句直到暂停触发
+          idx = stopTargetRef.current.idx;
+          pinnedIdxRef.current = idx;
         } else {
           idx = findSentenceAt(sentences, t);
           if (!video.paused && idx >= 0 && idx !== lastCompletedIdxRef.current) {
