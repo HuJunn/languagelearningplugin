@@ -11,6 +11,8 @@ const THEATER_SUB_PATH =
   'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\X3WjbiXyu8Y.en.json3';
 const BILINGUAL_SUB_PATH =
   'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\vyfmCCu3coU.en.json3';
+const BILINGUAL_ASR_PATH =
+  'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\vyfmCCu3coU.asr.en.json3';
 const CLIPPING_PATH = 'E:\\CODEX\\codex-obsidian\\Clippings\\I Opened A FREE Carwash.md';
 
 describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', () => {
@@ -46,11 +48,18 @@ describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', ()
     expect(idx).toBe(2);
     expect(findSentenceBefore(tr.sentences, tr.sentences[2].start + 0.05)).toBe(2);
 
-    // Ensure every sentence starts strictly at its first word's timestamp and has a natural tail pad
+    // Ensure every sentence starts strictly at its first word's timestamp, has a natural tail pad when space allows, and never spills past next sentence start
     for (let i = 0; i < tr.sentences.length; i++) {
       const s = tr.sentences[i];
+      const lastEnd = s.words[s.words.length - 1].end;
+      const nextStart = tr.sentences[i + 1]?.start ?? Infinity;
       expect(s.start).toBe(s.words[0].start);
-      expect(s.end).toBeGreaterThanOrEqual(s.words[s.words.length - 1].end + 0.15);
+      if (nextStart - lastEnd >= 0.18) {
+        expect(s.end).toBeGreaterThanOrEqual(lastEnd + 0.15);
+      } else {
+        expect(s.end).toBeGreaterThan(lastEnd);
+        if (nextStart > lastEnd) expect(s.end).toBeLessThanOrEqual(nextStart);
+      }
     }
   });
 
@@ -184,5 +193,20 @@ describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', ()
     expect(tr.sentences[0].builtInZh).toBe('你好，世界。');
     expect(tr.sentences[1].text).toBe('Nice to meet you.');
     expect(tr.sentences[1].builtInZh).toBe('很高兴认识你。');
+  });
+
+  it('never extends sentence tail past next sentence start on tightly packed vyfmCCu3coU lines (around 5:24 / 5:29)', () => {
+    const rawManual = JSON.parse(fs.readFileSync(BILINGUAL_SUB_PATH, 'utf8'));
+    const rawAsr = JSON.parse(fs.readFileSync(BILINGUAL_ASR_PATH, 'utf8'));
+    const tr = buildTranscript({ videoId: 'vyfmCCu3coU', manualJson3: rawManual, asrJson3: rawAsr });
+
+    const letMeIdx = tr.sentences.findIndex((s) => s.text === 'Let me try it on.');
+    expect(letMeIdx).toBeGreaterThan(0);
+    const prevSent = tr.sentences[letMeIdx - 1];
+    const letMeSent = tr.sentences[letMeIdx];
+    // "It's size ten." ending must stay strictly before "Let me try it on." starts so auto-pause won't eat "Let"
+    expect(prevSent.end).toBeLessThanOrEqual(letMeSent.start);
+    expect(letMeSent.words[0].text).toBe('Let');
+    expect(letMeSent.words[0].start).toBeCloseTo(328.479, 2);
   });
 });

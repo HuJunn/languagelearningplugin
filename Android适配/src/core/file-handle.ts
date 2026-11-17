@@ -1,5 +1,5 @@
 import type { VideoVocab } from './types';
-import { mergeVocabIntoMarkdown, OBSIDIAN_OPEN_URI } from './obsidian';
+import { OBSIDIAN_OPEN_URI, ObsidianSyncResult, syncVocabIntoMarkdown } from './obsidian';
 
 const DB_NAME = 'sh_obsidian_handles';
 const STORE_NAME = 'handles';
@@ -44,13 +44,40 @@ async function saveHandle(handle: any): Promise<void> {
   }
 }
 
+export async function clearSavedObsidianHandle(): Promise<void> {
+  try {
+    const db = await openHandleDb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(KEY_VOCAB_FILE);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    // ignore
+  }
+}
+
+export function supportsLocalObsidianFileAccess(): boolean {
+  return typeof (window as any)?.showOpenFilePicker === 'function';
+}
+
+export interface LocalFileWriteResult {
+  ok: boolean;
+  fileName?: string;
+  status?: ObsidianSyncResult['status'];
+  addedCount?: number;
+  error?: string;
+  cancelled?: boolean;
+}
+
 /**
- * 直接关联并写入本地 Obsidian《languagelearning/生词表.md》文件，按视频原链接合并去重，并打开 Obsidian。
+ * 读取本地 Obsidian《生词表.md》并按标题匹配逻辑写入（无同标题按模板全量导入，有同标题仅追加新增词汇），完成后打开 Obsidian。
  */
 export async function writeVocabToLocalObsidianFile(
   vocab: VideoVocab,
   forcePick = false,
-): Promise<{ ok: boolean; fileName?: string; error?: string }> {
+): Promise<LocalFileWriteResult> {
   const win = window as any;
   if (typeof win.showOpenFilePicker !== 'function') {
     return { ok: false, error: '当前浏览器环境不支持 File System Access API' };
@@ -70,7 +97,7 @@ export async function writeVocabToLocalObsidianFile(
         ],
       });
       handle = picked?.[0];
-      if (!handle) return { ok: false, error: '未选择文件' };
+      if (!handle) return { ok: false, cancelled: true, error: '未选择文件' };
       await saveHandle(handle);
     }
 
@@ -82,20 +109,37 @@ export async function writeVocabToLocalObsidianFile(
       }
     }
 
-    const file: File = await handle.getFile();
+    let file: File;
+    try {
+      file = await handle.getFile();
+    } catch (readErr: any) {
+      if (readErr?.name === 'NotFoundError' && !forcePick) {
+        await clearSavedObsidianHandle();
+        return writeVocabToLocalObsidianFile(vocab, true);
+      }
+      throw readErr;
+    }
+
     const existingText = await file.text();
-    const mergedText = mergeVocabIntoMarkdown(existingText, vocab);
+    const syncRes = syncVocabIntoMarkdown(existingText, vocab);
 
-    const writable = await handle.createWritable();
-    await writable.write(mergedText);
-    await writable.close();
+    if (syncRes.status !== 'noop') {
+      const writable = await handle.createWritable();
+      await writable.write(syncRes.markdown);
+      await writable.close();
+    }
 
-    // 写入完成后唤起 Obsidian 打开该笔记
+    // 唤起 Obsidian 查看该笔记
     window.open(OBSIDIAN_OPEN_URI, '_blank');
-    return { ok: true, fileName: file.name };
+    return {
+      ok: true,
+      fileName: file.name,
+      status: syncRes.status,
+      addedCount: syncRes.addedCount,
+    };
   } catch (err: any) {
     if (err?.name === 'AbortError') {
-      return { ok: false, error: '已取消选择文件' };
+      return { ok: false, cancelled: true, error: '已取消选择文件' };
     }
     return { ok: false, error: String(err?.message ?? err) };
   }

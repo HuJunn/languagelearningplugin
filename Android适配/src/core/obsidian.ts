@@ -7,6 +7,14 @@ export const OBSIDIAN_OPEN_URI = `obsidian://open?vault=${encodeURIComponent(OBS
 const TABLE_HEADER =
   '| 时间 | 词汇与音标 | 词性与核心释义 | 原声双语语境 |\n| :---: | :--- | :--- | :--- |';
 
+export interface ObsidianSyncResult {
+  markdown: string;
+  /** created: 空文件按完整模板写入; appended_section: 未找到同标题，末尾追加新标题+生词; appended_words: 匹配到同标题，追加可新增词汇; noop: 匹配到同标题且无可追加词汇 */
+  status: 'created' | 'appended_section' | 'appended_words' | 'noop';
+  addedCount: number;
+  titleExists: boolean;
+}
+
 export function formatTimestamp(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
   const m = Math.floor(s / 60);
@@ -71,7 +79,6 @@ export function highlightWordInSentence(sentence: string, word: string, rawWord?
       return cleanSent.replace(re, '**$1**');
     }
   }
-  // 兜底：若词形变化与词干有轻微差异（如 vendor -> vendors）
   const stem = word.replace(/[^a-zA-Z0-9'-]/g, '');
   if (stem.length >= 3) {
     const inflectRe = new RegExp(`(?<!\\*)\\b(${escapeRegExp(stem)}[a-zA-Z'-]*)\\b(?!\\*)`, 'i');
@@ -112,6 +119,10 @@ function formatYamlScalar(val: string): string {
   return cleaned;
 }
 
+function normalizeTitle(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
 /**
  * 生成《界面选型》模板的 Markdown 区块：
  * - includeFrontmatter = true（默认）：包含完整 YAML frontmatter + `# Title` + 4 列表格
@@ -119,7 +130,7 @@ function formatYamlScalar(val: string): string {
  */
 export function formatVideoVocabSection(vocab: VideoVocab, includeFrontmatter = true): string {
   const cleanUrl = vocab.url || `https://www.youtube.com/watch?v=${vocab.videoId}`;
-  const title = (vocab.title || vocab.videoId).replace(/[\r\n]/g, ' ').trim();
+  const title = normalizeTitle(vocab.title || vocab.videoId);
   const rows = vocab.items.map((item) => formatVocabTableRow(item, cleanUrl)).join('\n');
 
   if (includeFrontmatter) {
@@ -143,106 +154,193 @@ export function formatVideoVocabSection(vocab: VideoVocab, includeFrontmatter = 
   );
 }
 
-function extractPreservedRowsFromBlock(blockText: string, overrideWords: Set<string>): string[] {
-  const preserved: string[] = [];
-  const lines = blockText.split(/\r?\n/);
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    // 匹配新格式表格行：| [0:15](...) | **photographer**... | ... |
-    if (line.trim().startsWith('|') && !/^\|\s*:?---/.test(line.trim()) && !/^\|\s*时间\s*\|/.test(line.trim())) {
-      const mRow = /\*\*([^*]+)\*\*/.exec(line);
-      if (mRow && !overrideWords.has(mRow[1].trim().toLowerCase())) {
-        preserved.push(line.trimEnd());
-      }
-      i++;
+function extractHeadingTitle(line: string): string | null {
+  const m = /^#{1,2}\s+(.+)$/.exec(line.trim());
+  if (!m) return null;
+  let heading = m[1].trim();
+  // 兼容旧格式 `## [视频标题](https://...)`
+  const linkMatch = /^\[([^\]]+)\]\([^)]+\)$/.exec(heading);
+  if (linkMatch) heading = linkMatch[1];
+  return normalizeTitle(heading);
+}
+
+function extractExistingWordsFromBlock(blockText: string): Set<string> {
+  const words = new Set<string>();
+  for (const line of blockText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    // 新格式表格行：| [0:15](...) | **photographer**... | ... |
+    if (trimmed.startsWith('|') && !/^\|\s*:?---/.test(trimmed) && !/^\|\s*时间\s*\|/.test(trimmed)) {
+      const mRow = /\*\*([^*]+)\*\*/.exec(trimmed);
+      if (mRow) words.add(mRow[1].trim().toLowerCase());
       continue;
     }
-    // 兼容旧格式列表项（若用户合并旧版《生词表.md》）
-    const mBullet = /^-\s+\*\*([^*]+)\*\*/.exec(line);
+    // 兼容旧格式列表项：- **photographer** ...
+    const mBullet = /^-\s+\*\*([^*]+)\*\*/.exec(trimmed);
     if (mBullet) {
-      const w = mBullet[1].trim().toLowerCase();
-      const bulletLines = [line];
-      while (i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) {
-        i++;
-        bulletLines.push(lines[i]);
-      }
-      if (!overrideWords.has(w)) {
-        preserved.push(bulletLines.join('\n'));
-      }
+      words.add(mBullet[1].trim().toLowerCase());
     }
-    i++;
   }
-  return preserved;
+  return words;
+}
+
+/** 将新表格行追加到已匹配标题区块的末尾（或表格最后一行之后，保留已有全部手动/历史内容） */
+function appendRowsToSection(blockText: string, newRows: string[]): string {
+  const lines = blockText.split(/\r?\n/);
+  const hasTableHeader = lines.some((l) => /^\|\s*时间\s*\|/.test(l.trim()));
+
+  // 找到本区块最后一条有效表格行
+  let lastTableRowIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t.startsWith('|')) lastTableRowIdx = i;
+  }
+
+  if (lastTableRowIdx >= 0) {
+    const nextLines = [...lines];
+    nextLines.splice(lastTableRowIdx + 1, 0, ...newRows);
+    return nextLines.join('\n');
+  }
+
+  // 该标题存在但下面还没有表格（例如用户保留了标题但删除了下方表格行）
+  let insertAt = lines.length;
+  while (insertAt > 0 && (lines[insertAt - 1].trim() === '' || lines[insertAt - 1].trim() === '---')) {
+    insertAt--;
+  }
+  const head = lines.slice(0, insertAt).join('\n').trimEnd();
+  const tail = lines.slice(insertAt).join('\n');
+  const tableBlock = hasTableHeader ? newRows.join('\n') : `${TABLE_HEADER}\n${newRows.join('\n')}`;
+  return tail.trim() ? `${head}\n\n${tableBlock}\n\n${tail}` : `${head}\n\n${tableBlock}`;
 }
 
 /**
- * 将当前视频的生词合并进已有的《生词表.md》全文中（使用《界面选型》表格模板）：
- * - 按视频原链接（或 videoId）定位已有区块，存在则原位合并去重单词，不存在则在末尾新增区块。
+ * 按流程图逻辑将当前生词同步进 Markdown：
+ * A[点击导出 Obsidian]
+ *  -> B{md 中是否存在相同标题？}
+ *     |-- No --> C[按完整模板导入标题与生词]
+ *     |-- Yes -> D[检查已有内容，若有可追加的新词汇则追加；无新增则保持不变]
  */
-export function mergeVocabIntoMarkdown(existingMd: string, vocab: VideoVocab): string {
+export function syncVocabIntoMarkdown(existingMd: string, vocab: VideoVocab): ObsidianSyncResult {
+  const cleanUrl = vocab.url || `https://www.youtube.com/watch?v=${vocab.videoId}`;
+  const targetTitle = normalizeTitle(vocab.title || vocab.videoId);
   const trimmed = existingMd.trim();
+
   if (!trimmed) {
-    return formatVideoVocabSection(vocab, true);
+    return {
+      markdown: formatVideoVocabSection(vocab, true),
+      status: 'created',
+      addedCount: vocab.items.length,
+      titleExists: false,
+    };
   }
 
-  const cleanUrl = vocab.url || `https://www.youtube.com/watch?v=${vocab.videoId}`;
-  const title = (vocab.title || vocab.videoId).replace(/[\r\n]/g, ' ').trim();
-  const overrideWords = new Set(vocab.items.map((i) => i.word.toLowerCase()));
-  const newRows = vocab.items.map((item) => formatVocabTableRow(item, cleanUrl));
+  // 把文本切分成区块：每个 `# ` / `## ` 标题开启新区块，开头的 YAML frontmatter 归入第一个标题区块
+  const lines = trimmed.split(/\r?\n/);
+  const blocks: { title: string | null; lines: string[] }[] = [];
+  let inFrontmatter = false;
+  let current: { title: string | null; lines: string[] } = { title: null, lines: [] };
 
-  // 1) 若文件顶部本身是带 source 的单视频 frontmatter 且匹配当前视频
-  const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(trimmed);
-  if (fmMatch) {
-    const fmBody = fmMatch[1];
-    const bodyRest = fmMatch[2];
-    const sourceMatch = fmBody.includes(cleanUrl) || (vocab.videoId && fmBody.includes(vocab.videoId));
-    // 如果正文后面还没有切出其他视频的二级/分隔区块，或者第一个区块属于本视频
-    const restParts = bodyRest.trim().split(/^(?=#\s|##\s|---\s*$)/m).filter((p) => p.trim() !== '---' && p.trim().length > 0);
-    if (sourceMatch && restParts.length <= 2) {
-      const preserved = extractPreservedRowsFromBlock(bodyRest, overrideWords);
-      const allRows = [...preserved, ...newRows].join('\n');
-      return (
-        `---\n` +
-        `title: ${formatYamlScalar(title)}\n` +
-        `source: ${cleanUrl}\n` +
-        `tags: [vocabulary, table-view]\n` +
-        `---\n\n` +
-        `# ${title}\n\n` +
-        `${TABLE_HEADER}\n` +
-        `${allRows ? `${allRows}\n` : ''}`
-      );
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (i === 0 && line.trim() === '---') {
+      inFrontmatter = true;
+      current.lines.push(line);
+      continue;
+    }
+    if (inFrontmatter) {
+      current.lines.push(line);
+      if (line.trim() === '---') inFrontmatter = false;
+      continue;
+    }
+
+    const headingTitle = extractHeadingTitle(line);
+    if (headingTitle !== null) {
+      if (current.title === null && current.lines.length > 0) {
+        // 顶部 frontmatter / 前导空行并入第一个标题区块
+        current.title = headingTitle;
+        current.lines.push(line);
+        continue;
+      }
+      if (current.lines.length > 0 || current.title !== null) {
+        blocks.push(current);
+      }
+      current = { title: headingTitle, lines: [line] };
+      continue;
+    }
+    current.lines.push(line);
+  }
+  if (current.lines.length > 0 || current.title !== null) {
+    blocks.push(current);
+  }
+
+  // B: 优先按标题精确匹配（若仅顶部 YAML frontmatter 里有 title 且正文没写 `# 标题`，也尝试匹配 frontmatter 的 title）
+  let matchedIdx = blocks.findIndex((b) => b.title !== null && b.title === targetTitle);
+  if (matchedIdx === -1) {
+    const fmTitleMatch = /^---\r?\n[\s\S]*?^title:\s*(.+)$[\s\S]*?\r?\n---/m.exec(trimmed);
+    if (fmTitleMatch) {
+      let fmTitle = fmTitleMatch[1].trim();
+      if ((fmTitle.startsWith('"') && fmTitle.endsWith('"')) || (fmTitle.startsWith("'") && fmTitle.endsWith("'"))) {
+        fmTitle = fmTitle.slice(1, -1);
+      }
+      if (normalizeTitle(fmTitle) === targetTitle && blocks.length > 0) {
+        matchedIdx = 0;
+      }
     }
   }
 
-  // 2) 多视频区块按一级/二级标题切分（兼容 `# 标题` 与旧版 `## [标题](url)`）
-  const parts = trimmed.split(/^(?=#\s|##\s)/m);
-  const targetIdx = parts.findIndex(
-    (p) =>
-      (p.startsWith('# ') || p.startsWith('## ')) &&
-      (p.includes(cleanUrl) || (vocab.videoId && p.includes(vocab.videoId))),
-  );
-
-  if (targetIdx === -1) {
-    return `${trimmed}\n\n---\n\n${formatVideoVocabSection(vocab, false)}`;
+  // B --No--> C: 没有匹配标题，使用模板导入标题和全部词汇
+  if (matchedIdx === -1) {
+    return {
+      markdown: `${trimmed}\n\n---\n\n${formatVideoVocabSection(vocab, false)}`,
+      status: 'appended_section',
+      addedCount: vocab.items.length,
+      titleExists: false,
+    };
   }
 
-  const existingBlock = parts[targetIdx];
-  const preserved = extractPreservedRowsFromBlock(existingBlock, overrideWords);
-  const tableRows = preserved.filter((r) => r.startsWith('|')).concat(newRows);
-  const legacyBullets = preserved.filter((r) => !r.startsWith('|'));
-  const hasTrailingHr = /\n---\s*$/.test(existingBlock.trim());
+  // B --Yes--> D: 匹配到相同标题，检查已有内容并仅追加可新增词汇
+  const matchedBlockText = blocks[matchedIdx].lines.join('\n');
+  const existingWords = extractExistingWordsFromBlock(matchedBlockText);
+  const seenNew = new Set<string>();
+  const addableItems: VocabItem[] = [];
+  for (const item of vocab.items) {
+    const key = item.word.trim().toLowerCase();
+    if (!key || existingWords.has(key) || seenNew.has(key)) continue;
+    seenNew.add(key);
+    addableItems.push(item);
+  }
 
-  const rebuiltSection =
-    `# ${title}\n\n` +
-    `> source: ${cleanUrl}\n\n` +
-    `${TABLE_HEADER}\n` +
-    `${tableRows.join('\n')}` +
-    (legacyBullets.length ? `\n\n${legacyBullets.join('\n')}` : '') +
-    `\n${hasTrailingHr ? '\n---\n\n' : '\n'}`;
+  if (addableItems.length === 0) {
+    return {
+      markdown: existingMd,
+      status: 'noop',
+      addedCount: 0,
+      titleExists: true,
+    };
+  }
 
-  parts[targetIdx] = rebuiltSection;
-  return parts.map((p) => p.trimEnd()).join('\n\n') + '\n';
+  const newRows = addableItems.map((item) => formatVocabTableRow(item, cleanUrl));
+  const updatedBlockText = appendRowsToSection(matchedBlockText, newRows);
+  blocks[matchedIdx].lines = updatedBlockText.split(/\r?\n/);
+
+  const rebuilt = blocks
+    .map((b) => b.lines.join('\n').trimEnd())
+    .filter((s) => s.length > 0)
+    .join('\n\n')
+    .replace(/\n{3,}/g, '\n\n') + '\n';
+
+  return {
+    markdown: rebuilt,
+    status: 'appended_words',
+    addedCount: addableItems.length,
+    titleExists: true,
+  };
+}
+
+/**
+ * 将当前视频的生词合并进已有的《生词表.md》全文中
+ */
+export function mergeVocabIntoMarkdown(existingMd: string, vocab: VideoVocab): string {
+  return syncVocabIntoMarkdown(existingMd, vocab).markdown;
 }
 
 /**

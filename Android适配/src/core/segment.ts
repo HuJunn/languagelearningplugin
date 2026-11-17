@@ -90,13 +90,15 @@ export function segmentSentences(words: Word[], opts: SegmentOptions = {}): Sent
     };
   });
   // 首句开头严格等于第一个词的起点 (ws[0].start)；
-  // 句尾留足自然收尾余量（+0.20s，允许连读时稍微带出下一句开头一点声音，不提前截断尾音）
+  // 句尾留足自然收尾余量（最多 +0.24s），若下一句紧随其后则严禁越过下一句起点，避免吞掉下一句开头单词
   for (let i = 0; i < sentences.length; i++) {
     const lastWordEnd = sentences[i].words[sentences[i].words.length - 1].end;
     const nextStart = sentences[i + 1]?.start ?? Infinity;
-    const minTail = lastWordEnd + 0.16;
-    const maxTail = Math.min(nextStart + 0.16, lastWordEnd + 0.28);
-    sentences[i].end = Math.max(minTail, maxTail);
+    const naturalEnd = lastWordEnd + 0.24;
+    sentences[i].end =
+      nextStart === Infinity
+        ? naturalEnd
+        : Math.min(naturalEnd, Math.max(lastWordEnd + 0.01, nextStart - 0.02));
   }
   return sentences;
 }

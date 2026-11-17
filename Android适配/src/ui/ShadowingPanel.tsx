@@ -8,7 +8,10 @@ import {
   formatVocabTableRow,
   OBSIDIAN_OPEN_URI,
 } from '../core/obsidian';
-import { writeVocabToLocalObsidianFile } from '../core/file-handle';
+import {
+  supportsLocalObsidianFileAccess,
+  writeVocabToLocalObsidianFile,
+} from '../core/file-handle';
 import { findSentenceAt, findSentenceBefore } from '../core/segment';
 import { translateSentencesBatch, translateWordOnline } from '../core/translate';
 import type { UpdateCheckResult } from '../core/version';
@@ -143,6 +146,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   const activeIdxRef = useRef<number>(-1);
   const autoPauseRef = useRef<boolean>(autoPause);
   autoPauseRef.current = autoPause;
+  const lastUriNoopAtRef = useRef<number>(0);
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -248,15 +252,19 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       lastCompletedIdxRef.current = null;
       pinnedIdxRef.current = index;
       stopTargetRef.current = autoPauseRef.current ? { idx: index, time: sent.end } : null;
-      // 首句开头精准裁切：从第一个单词起点提前 80ms 预卷，消除解码延迟与连读吞字，确保完整听到第一个词
+      // 首句开头自适应预卷：有停顿时提前 220ms，紧邻上一句时提前 140ms~220ms，抵消 ASR 延迟与播放器 seek 起音淡入，防止开头吞字
       const firstWordStart = sent.words[0]?.start ?? sent.start;
-      video.currentTime = Math.max(0, firstWordStart - 0.08);
+      const prevSent = index > 0 ? transcript?.sentences[index - 1] : undefined;
+      const prevWordEnd = prevSent?.words[prevSent.words.length - 1]?.end ?? 0;
+      const gapFromPrev = prevSent ? firstWordStart - prevWordEnd : 1;
+      const preRoll = gapFromPrev >= 0.22 ? 0.22 : Math.max(0.14, Math.min(0.22, gapFromPrev + 0.08));
+      video.currentTime = Math.max(0, firstWordStart - preRoll);
       video.play().catch(() => {});
       setActiveIdx(index);
       activeIdxRef.current = index;
       centerSentenceInList(index, true);
     },
-    [getVideoElement, centerSentenceInList],
+    [getVideoElement, centerSentenceInList, transcript],
   );
 
   // 60fps 歌词级逐词渐变同步 & 读完本句自动暂停
@@ -306,10 +314,10 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
         } else if (
           !video.paused &&
           pinnedIdxRef.current != null &&
-          t >= sentences[pinnedIdxRef.current].start - 0.15 &&
+          t >= sentences[pinnedIdxRef.current].start - 0.35 &&
           t < sentences[pinnedIdxRef.current].start
         ) {
-          // 处于跳句开头的 80ms 预卷区间时，保持锁定在目标句
+          // 处于跳句开头的预卷区间时，保持锁定在目标句
           idx = pinnedIdxRef.current;
         } else if (
           !video.paused &&
@@ -893,18 +901,18 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     [videoId, videoUrl, videoTitle, enrichedVocabItems],
   );
 
-  // 方式1：通过 Obsidian 官方 URI 直接追加到 languagelearning/生词表（使用《界面选型》表格模板）
-  const handleObsidianUriExport = () => {
+  // 方式1：通过 Obsidian URI 追加到 languagelearning/生词表（移动端兜底或手动使用 URI）
+  const handleObsidianUriExport = (forceFull = false) => {
     if (!enrichedVocabItems.length) {
       showToast('请先点击字幕中的单词并加入生词本');
       return;
     }
     const exportedKey = `sh_exported_${videoId}`;
-    const alreadyExported = new Set<string>(loadJson<string[]>(exportedKey, []));
+    const alreadyExported = new Set<string>(forceFull ? [] : loadJson<string[]>(exportedKey, []));
     const newItems = enrichedVocabItems.filter((i) => !alreadyExported.has(i.word.toLowerCase()));
 
     let uri: string;
-    if (alreadyExported.size === 0) {
+    if (forceFull || alreadyExported.size === 0) {
       const hasPriorOtherVideo = loadJson<boolean>('sh_obsidian_any_exported', false);
       const sectionMd = formatVideoVocabSection(currentVideoVocab, !hasPriorOtherVideo);
       uri = buildObsidianAppendUri(
@@ -917,9 +925,15 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       const rowsMd = newItems.map((item) => formatVocabTableRow(item, cleanUrl)).join('\n') + '\n';
       uri = buildObsidianAppendUri(rowsMd, false);
     } else {
-      // 全部已导出过，直接打开 Obsidian 生词表
+      const now = Date.now();
+      if (now - lastUriNoopAtRef.current < 6000) {
+        lastUriNoopAtRef.current = 0;
+        handleObsidianUriExport(true);
+        return;
+      }
+      lastUriNoopAtRef.current = now;
       window.open(OBSIDIAN_OPEN_URI, '_blank');
-      showToast('所有生词均已导出，已为您打开 Obsidian 生词表');
+      showToast('本地记录显示生词均已导出；若已在 Obsidian 清空/删除内容，请在 6 秒内再点一次重新写入');
       return;
     }
 
@@ -930,7 +944,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     showToast(`已按《界面选型》表格模板追加 ${newItems.length || enrichedVocabItems.length} 个生词到 Obsidian`);
   };
 
-  // 方式2：直接写入本地《生词表.md》并按视频链接原位合并去重
+  // 方式2：读取真实本地《生词表.md》，先匹配标题再判断可追加的新词汇（无同标题按模板全量导入），并打开 Obsidian
   const handleLocalFileMergeExport = async (forcePick = false) => {
     if (!enrichedVocabItems.length) {
       showToast('请先点击字幕中的单词并加入生词本');
@@ -938,10 +952,29 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     }
     const res = await writeVocabToLocalObsidianFile(currentVideoVocab, forcePick);
     if (res.ok) {
-      showToast(`已按视频链接合并写入 ${res.fileName} 并打开 Obsidian！`);
+      if (res.status === 'noop') {
+        showToast(`「${currentVideoVocab.title}」下暂无可追加的新词汇（已打开 Obsidian）`);
+      } else if (res.status === 'appended_words') {
+        showToast(`已在同标题下追加 ${res.addedCount} 个新词汇并打开 Obsidian！`);
+      } else {
+        showToast(`未检测到同标题，已按模板导入标题与 ${res.addedCount} 个词汇并打开 Obsidian！`);
+      }
     } else if (res.error) {
       showToast(res.error);
     }
+  };
+
+  // 主导出按钮：桌面端支持本地文件读写时先读取真实 .md 文件做标题/词条校验，不支持时退回 URI（连点可强制重导）
+  const handleExportObsidian = async () => {
+    if (!enrichedVocabItems.length) {
+      showToast('请先点击字幕中的单词并加入生词本');
+      return;
+    }
+    if (supportsLocalObsidianFileAccess()) {
+      await handleLocalFileMergeExport(false);
+      return;
+    }
+    handleObsidianUriExport(false);
   };
 
   // 方式3：复制《界面选型》表格模板 Markdown 并打开 Obsidian 生词表
@@ -1353,15 +1386,22 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
               </button>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-              <button className="sh-btn sh-btn-active" onClick={handleObsidianUriExport}>
-                ⚡ URI 一键追加到 Obsidian 生词表
+              <button
+                className="sh-btn sh-btn-active"
+                onClick={() => handleLocalFileMergeExport(false)}
+                title="读取 E:\CODEX\codex-obsidian\languagelearning\生词表.md，匹配标题并仅追加新增词汇"
+              >
+                📂 写入本地《生词表.md》(按标题校验追加)
               </button>
               <button
                 className="sh-btn"
-                onClick={() => handleLocalFileMergeExport(false)}
-                title="选择 E:\CODEX\codex-obsidian\languagelearning\生词表.md 后，按视频原链接自动合并去重"
+                onClick={() => handleLocalFileMergeExport(true)}
+                title="重新选择目标 .md 文件"
               >
-                📂 写入本地《生词表.md》(按视频链接合并)
+                🔄 更换 .md 文件
+              </button>
+              <button className="sh-btn" onClick={() => handleObsidianUriExport(false)}>
+                ⚡ URI 追加 (若已删内容可连点重导)
               </button>
               <button className="sh-btn" onClick={handleCopyAndOpenObsidian}>
                 📋 复制 Markdown 并打开 Obsidian
@@ -1502,8 +1542,8 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
           </button>
           <button
             className="sh-btn sh-btn-active"
-            onClick={handleObsidianUriExport}
-            title="按视频原链接分割，导出到 obsidian://open?vault=codex-obsidian&file=languagelearning%2F%E7%94%9F%E8%AF%8D%E8%A1%A8"
+            onClick={handleExportObsidian}
+            title="先在 md 中匹配标题（有则追加新词，无则按模板全量导入），并打开 Obsidian"
           >
             ↗ 导出 Obsidian
           </button>

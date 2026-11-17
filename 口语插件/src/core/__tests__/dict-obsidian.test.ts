@@ -6,6 +6,7 @@ import {
   formatVideoVocabSection,
   mergeVocabIntoMarkdown,
   OBSIDIAN_OPEN_URI,
+  syncVocabIntoMarkdown,
 } from '../obsidian';
 import { compareSemver, parseAndroidUpdatesXml } from '../version';
 
@@ -108,6 +109,32 @@ describe('Obsidian vocabulary markdown formatter & merger (table-view template)'
     expect(md3).toContain('# Another Video');
     expect(formatVideoVocabSection(v2)).toContain('https://www.youtube.com/watch?v=abc123xyz&t=12s');
     expect(buildObsidianAppendUri('| row |\n', false)).not.toContain('content=%0A');
+
+    // Re-importing same words under existing title returns noop without duplicating
+    const noopRes = syncVocabIntoMarkdown(md3, v1More);
+    expect(noopRes.titleExists).toBe(true);
+    expect(noopRes.status).toBe('noop');
+    expect(noopRes.addedCount).toBe(0);
+
+    // If user deletes a word from Obsidian md, re-running sync adds only the deleted word back
+    const deletedGrandMd = md3
+      .split(/\r?\n/)
+      .filter((l) => !l.includes('**grand**'))
+      .join('\n');
+    const readdRes = syncVocabIntoMarkdown(deletedGrandMd, v1More);
+    expect(readdRes.titleExists).toBe(true);
+    expect(readdRes.status).toBe('appended_words');
+    expect(readdRes.addedCount).toBe(1);
+    expect(readdRes.markdown).toContain('**grand**');
+
+    // If user deletes entire Obsidian content, sync re-creates with full template
+    const recreated = syncVocabIntoMarkdown('', v1More);
+    expect(recreated.titleExists).toBe(false);
+    expect(recreated.status).toBe('created');
+    expect(recreated.addedCount).toBe(2);
+    expect(recreated.markdown).toContain('tags: [vocabulary, table-view]');
+    expect(recreated.markdown).toContain('**proposition**');
+    expect(recreated.markdown).toContain('**grand**');
   });
 });
 
