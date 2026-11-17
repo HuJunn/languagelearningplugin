@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
-import { buildTranscript } from '../pipeline';
+import { buildTranscript, selectChineseTrack } from '../pipeline';
 import { alignManualToAsr } from '../align';
 import { parseAsrJson3, parseCustomTranscriptCues } from '../captions';
 import { findSentenceAt, findSentenceBefore } from '../segment';
@@ -9,6 +9,8 @@ const SUB_PATH =
   'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\nJs7YXLYu0A.en.json3';
 const THEATER_SUB_PATH =
   'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\X3WjbiXyu8Y.en.json3';
+const BILINGUAL_SUB_PATH =
+  'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\vyfmCCu3coU.en.json3';
 const CLIPPING_PATH = 'E:\\CODEX\\codex-obsidian\\Clippings\\I Opened A FREE Carwash.md';
 
 describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', () => {
@@ -134,5 +136,53 @@ describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', ()
     expect(sent3).toBeDefined();
     // Because overlapping cue durations are truncated at next cue start (51.40s), "We" is strictly before "fully" (51.40s)
     expect(sent3.words[0].start).toBeLessThan(sent3.words.find((w) => w.text === 'fully')!.start);
+  });
+
+  it('strips embedded Chinese into builtInZh and keeps English-only text on vyfmCCu3coU', () => {
+    const rawManual = JSON.parse(fs.readFileSync(BILINGUAL_SUB_PATH, 'utf8'));
+    const tr = buildTranscript({ videoId: 'vyfmCCu3coU', manualJson3: rawManual });
+
+    expect(tr.sentences.length).toBeGreaterThan(80);
+    const cjkRe = /[\u4e00-\u9fff\u3400-\u4dbf]/;
+    for (const s of tr.sentences) {
+      expect(cjkRe.test(s.text)).toBe(false);
+    }
+
+    const familyAlbum = tr.sentences.find((s) => s.text.includes('Family Album, U.S.A.'));
+    expect(familyAlbum).toBeDefined();
+    expect(familyAlbum!.builtInZh).toContain('我称之为《美国写真集》');
+
+    const richard = tr.sentences.find((s) => s.text.includes('Richard Stewart'));
+    expect(richard).toBeDefined();
+    expect(richard!.builtInZh).toContain('Richard Stewart');
+  });
+
+  it('selects separate Chinese track via selectChineseTrack and attaches zhJson3 to English sentences', () => {
+    const zhTrack = selectChineseTrack([
+      { baseUrl: 'https://example.com/en', languageCode: 'en', name: 'English' },
+      { baseUrl: 'https://example.com/zh', languageCode: 'zh-Hans', name: '中文（简体）' },
+    ]);
+    expect(zhTrack?.languageCode).toBe('zh-Hans');
+
+    const tr = buildTranscript({
+      videoId: 'sep_zh_test',
+      manualJson3: {
+        events: [
+          { tStartMs: 1000, dDurationMs: 2000, segs: [{ utf8: 'Hello world.' }] },
+          { tStartMs: 4000, dDurationMs: 2000, segs: [{ utf8: 'Nice to meet you.' }] },
+        ],
+      },
+      zhJson3: {
+        events: [
+          { tStartMs: 1000, dDurationMs: 2000, segs: [{ utf8: '你好，世界。' }] },
+          { tStartMs: 4000, dDurationMs: 2000, segs: [{ utf8: '很高兴认识你。' }] },
+        ],
+      },
+    });
+    expect(tr.sentences.length).toBe(2);
+    expect(tr.sentences[0].text).toBe('Hello world.');
+    expect(tr.sentences[0].builtInZh).toBe('你好，世界。');
+    expect(tr.sentences[1].text).toBe('Nice to meet you.');
+    expect(tr.sentences[1].builtInZh).toBe('很高兴认识你。');
   });
 });

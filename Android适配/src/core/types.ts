@@ -7,6 +7,8 @@ export interface Word {
   timing: 'asr' | 'interp';
   /** 人工字幕替换了自动字幕中识别不同的词时，记录原来的 ASR 文本 */
   asrText?: string;
+  /** 随附的内置中文译文片段（双语字幕分离后保留） */
+  zh?: string;
 }
 
 /** 字幕中的一条（平台原始的一行） */
@@ -14,6 +16,7 @@ export interface Cue {
   start: number;
   end: number;
   text: string;
+  zh?: string;
 }
 
 export interface Sentence {
@@ -22,6 +25,8 @@ export interface Sentence {
   end: number;
   words: Word[];
   text: string;
+  /** 视频自带的内置中文译文（如双语字幕中的中文或独立中文字幕轨） */
+  builtInZh?: string;
 }
 
 export type TranscriptSource = 'manual+asr' | 'asr' | 'manual';

@@ -1,4 +1,4 @@
-import type { CaptionTrack, Cue, Transcript, Word } from './types';
+import type { CaptionTrack, Cue, Sentence, Transcript, Word } from './types';
 import {
   interpolateCue,
   Json3,
@@ -16,8 +16,24 @@ export interface BuildTranscriptInput {
   manualJson3?: Json3 | null;
   manualXml?: string | null;
   asrXml?: string | null;
+  zhJson3?: Json3 | null;
+  zhXml?: string | null;
   customManualCues?: Cue[] | null;
   segmentOptions?: SegmentOptions;
+}
+
+function attachSeparateChineseCues(sentences: Sentence[], zhCues: Cue[]): void {
+  if (!zhCues.length) return;
+  for (const s of sentences) {
+    if (s.builtInZh) continue;
+    const matched = zhCues.filter((c) => {
+      const mid = (c.start + c.end) / 2;
+      return (mid >= s.start - 0.15 && mid <= s.end + 0.15) || (Math.min(c.end, s.end) - Math.max(c.start, s.start) > 0.25);
+    });
+    if (matched.length) {
+      s.builtInZh = matched.map((c) => c.text).join(' ').trim();
+    }
+  }
 }
 
 /**
@@ -28,9 +44,10 @@ export interface BuildTranscriptInput {
  *    直接提取逐词时间戳并按标点/停顿断句。
  * 3. 只有人工字幕（或 XML 兜底）：
  *    按字符数在每条字幕内插值生成单词时间，再按标点断句。
+ * 若字幕中内嵌了中文或存在独立中文字幕轨，自动剥离中文到 sent.builtInZh，默认只显示英文。
  */
 export function buildTranscript(input: BuildTranscriptInput): Transcript {
-  const { videoId, asrJson3, manualJson3, manualXml, asrXml, customManualCues, segmentOptions } = input;
+  const { videoId, asrJson3, manualJson3, manualXml, asrXml, zhJson3, zhXml, customManualCues, segmentOptions } = input;
 
   const asrWords: Word[] = asrJson3
     ? parseAsrJson3(asrJson3)
@@ -46,10 +63,17 @@ export function buildTranscript(input: BuildTranscriptInput): Transcript {
     manualCues = parseTimedTextXml(manualXml);
   }
 
+  const zhCues: Cue[] = zhJson3
+    ? parseCuesJson3(zhJson3, false)
+    : zhXml
+      ? parseTimedTextXml(zhXml, false)
+      : [];
+
   // 情况 1：人工字幕 + 自动字幕同时存在 -> 对齐替换差异词并保留逐词时间
   if (manualCues.length > 0 && asrWords.length > 0) {
     const { words, stats } = alignManualToAsr(manualCues, asrWords);
     const sentences = segmentSentences(words, segmentOptions);
+    attachSeparateChineseCues(sentences, zhCues);
     return {
       videoId,
       source: 'manual+asr',
@@ -61,6 +85,7 @@ export function buildTranscript(input: BuildTranscriptInput): Transcript {
   // 情况 2：只有自动字幕（json3 含逐词 tOffsetMs）
   if (asrWords.length > 0) {
     const sentences = segmentSentences(asrWords, segmentOptions);
+    attachSeparateChineseCues(sentences, zhCues);
     return {
       videoId,
       source: 'asr',
@@ -80,11 +105,29 @@ export function buildTranscript(input: BuildTranscriptInput): Transcript {
 
   const interpWords = fallbackCues.flatMap((c) => interpolateCue(c));
   const sentences = segmentSentences(interpWords, segmentOptions);
+  attachSeparateChineseCues(sentences, zhCues);
   return {
     videoId,
     source: 'manual',
     sentences,
   };
+}
+
+/** 选出视频自带的中文字幕轨（优先简体、非自动翻译） */
+export function selectChineseTrack(tracks: CaptionTrack[]): CaptionTrack | null {
+  if (!Array.isArray(tracks) || !tracks.length) return null;
+  const zhTracks = tracks.filter((t) => /^zh(-|$)/i.test(t.languageCode || ''));
+  if (!zhTracks.length) return null;
+  const rankZh = (t: CaptionTrack) => {
+    const c = (t.languageCode || '').toLowerCase();
+    let score = 10;
+    if (c === 'zh-hans' || c === 'zh-cn') score = 0;
+    else if (c === 'zh') score = 1;
+    else if (c === 'zh-hant' || c === 'zh-tw' || c === 'zh-hk') score = 2;
+    if (t.kind === 'asr' || (t.vssId ?? '').startsWith('a.')) score += 20;
+    return score;
+  };
+  return zhTracks.sort((a, b) => rankZh(a) - rankZh(b))[0] ?? null;
 }
 
 /**

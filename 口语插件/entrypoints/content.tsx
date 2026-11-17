@@ -16,6 +16,8 @@ interface RawCaptionMessage {
   manualXml?: string | null;
   asrJson3?: Json3 | null;
   asrXml?: string | null;
+  zhJson3?: Json3 | null;
+  zhXml?: string | null;
 }
 
 interface CaptionProgress {
@@ -290,6 +292,8 @@ const App: React.FC<{ hostEl: HTMLElement }> = ({ hostEl }) => {
       manualJson3: rawMsg.manualJson3,
       manualXml: rawMsg.manualXml,
       asrXml: rawMsg.asrXml,
+      zhJson3: rawMsg.zhJson3,
+      zhXml: rawMsg.zhXml,
       customManualCues: customCues,
     });
   }, [rawMsg, customCues]);

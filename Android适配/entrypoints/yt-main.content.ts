@@ -1,4 +1,4 @@
-import { selectEnglishTracks } from '../src/core/pipeline';
+import { selectEnglishTracks, selectChineseTrack } from '../src/core/pipeline';
 import type { CaptionTrack } from '../src/core/types';
 import type { Json3 } from '../src/core/captions';
 
@@ -486,6 +486,10 @@ export default defineContentScript({
         if (runId !== activeRunId) return;
       }
 
+      const zhTrack = selectChineseTrack(meta.tracks);
+      const zhData = (manualData || asrData) && zhTrack ? await fetchTrackPayload(videoId, zhTrack) : null;
+      if (runId !== activeRunId) return;
+
       const hasCaptions = Boolean(manualData || asrData);
       emitProgress(videoId, 96, hasCaptions ? '正在解析逐词时间轴与智能分句...' : '拉取结束');
 
@@ -505,6 +509,8 @@ export default defineContentScript({
           manualXml: manualData?.xml ?? null,
           asrJson3: asrData?.json3 ?? null,
           asrXml: asrData?.xml ?? null,
+          zhJson3: zhData?.json3 ?? null,
+          zhXml: zhData?.xml ?? null,
         },
         '*',
       );

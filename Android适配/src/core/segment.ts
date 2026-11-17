@@ -75,13 +75,20 @@ export function segmentSentences(words: Word[], opts: SegmentOptions = {}): Sent
   };
   groups.forEach(splitLong);
 
-  const sentences: Sentence[] = split.map((ws, id) => ({
-    id,
-    start: ws[0].start,
-    end: ws[ws.length - 1].end,
-    words: ws,
-    text: ws.map((w) => w.text).join(' '),
-  }));
+  const sentences: Sentence[] = split.map((ws, id) => {
+    const zhs: string[] = [];
+    for (const w of ws) {
+      if (w.zh && !zhs.includes(w.zh)) zhs.push(w.zh);
+    }
+    return {
+      id,
+      start: ws[0].start,
+      end: ws[ws.length - 1].end,
+      words: ws,
+      text: ws.map((w) => w.text).join(' '),
+      ...(zhs.length ? { builtInZh: zhs.join(' ') } : {}),
+    };
+  });
   // 首句开头严格等于第一个词的起点 (ws[0].start)；
   // 句尾留足自然收尾余量（+0.20s，允许连读时稍微带出下一句开头一点声音，不提前截断尾音）
   for (let i = 0; i < sentences.length; i++) {

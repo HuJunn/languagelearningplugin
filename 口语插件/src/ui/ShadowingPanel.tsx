@@ -400,11 +400,11 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     return () => cancelAnimationFrame(rafId);
   }, [transcript, getVideoElement]);
 
-  // 整句译文开关打开时，批量翻译当前视频的所有句子
+  // 整句译文开关打开时，批量翻译当前视频的所有句子（已有自带中文字幕的句子直接复用，无需在线翻译）
   useEffect(() => {
     if (!showZh || !transcript?.sentences.length) return;
     const sentences = transcript.sentences;
-    const missing = sentences.filter((s) => !zhMap[s.id]);
+    const missing = sentences.filter((s) => !s.builtInZh && !zhMap[s.id]);
     if (missing.length === 0 || zhLoading) return;
 
     let cancelled = false;
@@ -486,7 +486,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                 ...prev,
                 onlineLoading: false,
                 onlineWord: res?.wordTranslation,
-                onlineSentence: res?.sentenceTranslation,
+                onlineSentence: sentence.builtInZh || res?.sentenceTranslation,
                 onlineProvider: res?.provider,
               }
             : prev,
@@ -1106,7 +1106,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                       </div>
                       {showZh && (
                         <div className="sh-zh-line">
-                          {zh || (zhLoading ? '正在翻译句子...' : '')}
+                          {sent.builtInZh || zh || (zhLoading ? '正在翻译句子...' : '')}
                         </div>
                       )}
                     </div>

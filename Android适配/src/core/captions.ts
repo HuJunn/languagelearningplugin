@@ -72,8 +72,133 @@ export function parseAsrJson3(data: Json3): Word[] {
   return words;
 }
 
-/** 解析人工字幕 json3：每个 event 是一整行，只有行级时间 */
-export function parseCuesJson3(data: Json3): Cue[] {
+const CJK_CHAR = /[\u4e00-\u9fff\u3400-\u4dbf]/;
+const CJK_PUNCT = /[\u3000-\u303f\uff00-\uffef]/;
+const CJK_OR_PUNCT = /[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/;
+const CJK_END = /[。！？]/;
+
+function startsChineseSegment(s: string, pos: number): boolean {
+  if (pos >= s.length) return false;
+  if (CJK_CHAR.test(s[pos])) return true;
+  if (/[《「【（“]/.test(s[pos]) && CJK_CHAR.test(s.slice(pos, pos + 14))) return true;
+  return /^[A-Za-z0-9'.,-]+(?:\s+[A-Za-z0-9'.,-]+){0,2}\s*[，。！？、；：]/.test(s.slice(pos));
+}
+
+/**
+ * 将中英混排的双语字幕行拆分为成对的 { en, zh }（支持中文中夹带英文人名，如 "我叫Richard Stewart。"）
+ */
+export function splitBilingualCueText(raw: string): Array<{ en: string; zh: string }> {
+  const s = raw.replace(/\s+/g, ' ').trim();
+  if (!s) return [];
+  if (!CJK_CHAR.test(s)) return [{ en: s, zh: '' }];
+
+  const pairs: Array<{ en: string; zh: string }> = [];
+  let i = 0;
+  const n = s.length;
+
+  while (i < n) {
+    while (i < n && s[i] === ' ') i++;
+    if (i >= n) break;
+
+    let en = '';
+    const enStart = i;
+    while (i < n) {
+      if (CJK_CHAR.test(s[i]) || CJK_PUNCT.test(s[i])) break;
+      if (/[《「【（“]/.test(s[i]) && CJK_CHAR.test(s.slice(i, i + 14))) break;
+      en += s[i++];
+    }
+    en = en.trim();
+
+    // 若句末标点后紧跟一个无句号的短人名且后接中文标点/汉字（如 "... Nice! Gerald，亲一亲妈咪"），把该人名归入中文段
+    if (en && i < n && (CJK_CHAR.test(s[i]) || CJK_PUNCT.test(s[i]))) {
+      const m = /^(.*[.?!])\s+([A-Za-z][A-Za-z0-9',-]*(?:\s+[A-Za-z][A-Za-z0-9',-]*){0,2})$/.exec(en);
+      if (m && !/\b(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|vs|etc)\.$/i.test(m[1])) {
+        en = m[1].trim();
+        const rewindIdx = s.lastIndexOf(m[2], i);
+        if (rewindIdx >= enStart) i = rewindIdx;
+      }
+    }
+
+    let zh = '';
+    while (i < n) {
+      const ch = s[i];
+      if (CJK_OR_PUNCT.test(ch) || ch === ' ') {
+        zh += ch;
+        i++;
+        if (CJK_END.test(ch)) {
+          let k = i;
+          while (k < n && s[k] === ' ') k++;
+          if (k >= n || !startsChineseSegment(s, k)) {
+            i = k;
+            break;
+          }
+        }
+        continue;
+      }
+      if ((ch === '?' || ch === '!') && zh.length > 0 && CJK_OR_PUNCT.test(zh[zh.length - 1])) {
+        zh += ch;
+        i++;
+        let k = i;
+        while (k < n && s[k] === ' ') k++;
+        if (k >= n || !startsChineseSegment(s, k)) {
+          i = k;
+          break;
+        }
+        continue;
+      }
+      const rest = s.slice(i);
+      const nextBoundary = rest.search(/[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/);
+      if (nextBoundary < 0) break;
+      const between = rest.slice(0, nextBoundary);
+      const hasAsciiSentenceEnd = /[.?!]/.test(between);
+      const wordCount = between.trim().split(/\s+/).filter(Boolean).length;
+      if (!hasAsciiSentenceEnd && wordCount <= 3) {
+        zh += s.slice(i, i + nextBoundary);
+        i += nextBoundary;
+      } else {
+        break;
+      }
+    }
+    zh = zh.trim();
+    if (en || zh) pairs.push({ en, zh });
+  }
+  return pairs;
+}
+
+/** 将一条可能含中英双语的字幕按比例展开为纯英文 Cue（中文保存在 cue.zh 中），跳过纯中文片头/片尾 */
+export function expandBilingualCues(rawCues: Cue[]): Cue[] {
+  const out: Cue[] = [];
+  for (const cue of rawCues) {
+    const pairs = splitBilingualCueText(cue.text).filter((p) => p.en.trim().length > 0);
+    if (!pairs.length) continue;
+    if (pairs.length === 1) {
+      out.push({
+        start: cue.start,
+        end: cue.end,
+        text: pairs[0].en,
+        ...(pairs[0].zh ? { zh: pairs[0].zh } : {}),
+      });
+      continue;
+    }
+    const totalChars = pairs.reduce((a, p) => a + p.en.length + 1, 0);
+    let t = cue.start;
+    const span = Math.max(0.2, cue.end - cue.start);
+    for (const p of pairs) {
+      const d = (span * (p.en.length + 1)) / totalChars;
+      out.push({
+        start: t,
+        end: t + d,
+        text: p.en,
+        ...(p.zh ? { zh: p.zh } : {}),
+      });
+      t += d;
+    }
+  }
+  return out;
+}
+
+/** 解析人工字幕 json3：每个 event 是一整行，只有行级时间；自动分离内嵌中文译文 */
+export function parseCuesJson3(data: Json3, splitBilingual = true): Cue[] {
   const cues: Cue[] = [];
   for (const ev of data.events ?? []) {
     if (!ev.segs) continue;
@@ -91,7 +216,7 @@ export function parseCuesJson3(data: Json3): Cue[] {
   for (let i = 0; i < cues.length - 1; i++) {
     if (cues[i].end > cues[i + 1].start) cues[i].end = Math.max(cues[i].start + 0.2, cues[i + 1].start);
   }
-  return cues;
+  return splitBilingual ? expandBilingualCues(cues) : cues;
 }
 
 /** 把一行文本拆成单词，去掉非语音标记和说话人标记 */
@@ -111,7 +236,13 @@ export function interpolateCue(cue: Cue, tokens = tokenizeCueText(cue.text)): Wo
   let t = cue.start;
   return tokens.map((text) => {
     const d = ((cue.end - cue.start) * (text.length + 1)) / total;
-    const w: Word = { text, start: t, end: t + d, timing: 'interp' };
+    const w: Word = {
+      text,
+      start: t,
+      end: t + d,
+      timing: 'interp',
+      ...(cue.zh ? { zh: cue.zh } : {}),
+    };
     t += d;
     return w;
   });
@@ -197,8 +328,8 @@ export function parseAsrTimedTextXml(xml: string): Word[] {
   return words;
 }
 
-/** 解析 YouTube srv3 / timedtext XML（只有行级时间时的兜底，自动截断重叠行避免时间戳倒置） */
-export function parseTimedTextXml(xml: string): Cue[] {
+/** 解析 YouTube srv3 / timedtext XML（只有行级时间时的兜底，自动截断重叠行并分离内嵌中文译文） */
+export function parseTimedTextXml(xml: string, splitBilingual = true): Cue[] {
   const cues: Cue[] = [];
   const decode = (s: string) =>
     s
@@ -229,7 +360,7 @@ export function parseTimedTextXml(xml: string): Cue[] {
       cues[i].end = Math.max(cues[i].start + 0.15, cues[i + 1].start);
     }
   }
-  return cues;
+  return splitBilingual ? expandBilingualCues(cues) : cues;
 }
 
 function parseClockTime(raw: string): number {

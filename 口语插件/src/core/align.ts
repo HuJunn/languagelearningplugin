@@ -141,10 +141,17 @@ export function alignManualToAsr(cues: Cue[], asr: Word[], windowPad = 1.5): { w
           end: a.end,
           timing: 'asr' as const,
           ...(kind[k] === 'sub' ? { asrText: a.text } : {}),
+          ...(cue.zh ? { zh: cue.zh } : {}),
         };
       }
       stats.interpolated++;
-      return { text, start: NaN, end: NaN, timing: 'interp' as const };
+      return {
+        text,
+        start: NaN,
+        end: NaN,
+        timing: 'interp' as const,
+        ...(cue.zh ? { zh: cue.zh } : {}),
+      };
     });
     fillGaps(words, cue);
     out.push(...words);
