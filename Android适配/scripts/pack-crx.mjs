@@ -45,12 +45,26 @@ function toExtensionId(crxIdBytes) {
   return id;
 }
 
-const zipFiles = fs.readdirSync(OUT_DIR).filter((f) => f.endsWith('-edge.zip') || f.endsWith('.zip'));
-if (!zipFiles.length) {
-  throw new Error('No .zip found in .output/. Run `wxt zip -b edge` first.');
+const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const expectedZipName = `${pkg.name}-${pkg.version}-edge.zip`;
+const expectedZipPath = path.join(OUT_DIR, expectedZipName);
+
+let srcZip = '';
+if (fs.existsSync(expectedZipPath)) {
+  srcZip = expectedZipPath;
+} else {
+  const zipFiles = fs
+    .readdirSync(OUT_DIR)
+    .filter((f) => f.endsWith('-edge.zip'))
+    .map((f) => ({ name: f, full: path.join(OUT_DIR, f), mtime: fs.statSync(path.join(OUT_DIR, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  if (!zipFiles.length) {
+    throw new Error('No *-edge.zip found in .output/. Run `wxt zip -b edge` first.');
+  }
+  srcZip = zipFiles[0].full;
 }
-const srcZip = path.join(OUT_DIR, zipFiles[0]);
 const zipBuf = fs.readFileSync(srcZip);
+console.log(`Using source zip: ${path.basename(srcZip)} (${zipBuf.length} bytes)`);
 
 const privPem = getOrCreateKey();
 const pubDer = crypto.createPublicKey(privPem).export({ type: 'spki', format: 'der' });
@@ -93,7 +107,6 @@ fs.writeFileSync(crxOut, crxBuf);
 if (srcZip !== zipCopy) fs.copyFileSync(srcZip, zipCopy);
 
 // Generate updates.xml for GitHub auto-update
-const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const codebaseUrl =
   'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/android/yt-shadowing-android.crx';
 const updatesXml = [
