@@ -1,5 +1,10 @@
 import type { Sentence, Word } from './types';
 
+export interface DisplaySentence extends Sentence {
+  baseIds: number[];
+  isMerged?: boolean;
+}
+
 const ABBREV = new Set([
   'mr.', 'mrs.', 'ms.', 'dr.', 'st.', 'jr.', 'sr.', 'vs.', 'etc.', 'e.g.', 'i.e.', 'u.s.', 'u.k.', 'a.m.', 'p.m.', 'no.', 'mt.', 'prof.', 'inc.', 'ltd.', 'co.',
 ]);
@@ -101,6 +106,48 @@ export function segmentSentences(words: Word[], opts: SegmentOptions = {}): Sent
         : Math.min(naturalEnd, Math.max(lastWordEnd + 0.01, nextStart - 0.02));
   }
   return sentences;
+}
+
+/** 将通过"连接"关联的相邻基础句子合并为连续展示句（以首句 start 为起点、末句 end 为终点） */
+export function mergeAdjacentSentences(
+  sentences: Sentence[],
+  mergeNextIds: number[],
+): DisplaySentence[] {
+  if (!sentences.length) return [];
+  const linkSet = new Set(mergeNextIds);
+  const out: DisplaySentence[] = [];
+  let i = 0;
+  while (i < sentences.length) {
+    const group: Sentence[] = [sentences[i]];
+    let j = i;
+    while (j < sentences.length - 1 && linkSet.has(sentences[j].id)) {
+      j++;
+      group.push(sentences[j]);
+    }
+    if (group.length === 1) {
+      const s = group[0];
+      out.push({ ...s, baseIds: [s.id], isMerged: false });
+    } else {
+      const first = group[0];
+      const last = group[group.length - 1];
+      const zhs: string[] = [];
+      for (const g of group) {
+        if (g.builtInZh && !zhs.includes(g.builtInZh)) zhs.push(g.builtInZh);
+      }
+      out.push({
+        id: first.id,
+        start: first.start,
+        end: last.end,
+        words: group.flatMap((g) => g.words),
+        text: group.map((g) => g.text).join(' '),
+        ...(zhs.length ? { builtInZh: zhs.join(' ') } : {}),
+        baseIds: group.map((g) => g.id),
+        isMerged: true,
+      });
+    }
+    i = j + 1;
+  }
+  return out;
 }
 
 /** 二分查找：time 所在的句子下标；若两句句尾余量与下句开头重叠，优先归属已经开始的下一句 */

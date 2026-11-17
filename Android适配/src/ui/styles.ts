@@ -604,4 +604,61 @@ export const PANEL_CSS = `
   background: var(--sh-active-bg);
   border-left-color: var(--sh-accent);
 }
+
+/* 句子连接 & 倍速选择器 */
+.sh-speed-select {
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--sh-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--sh-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  outline: none;
+}
+
+.sh-speed-select option {
+  background: #12141a;
+  color: #f1f5f9;
+}
+
+.sh-connect-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 12px;
+  background: rgba(56, 189, 248, 0.12);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.35);
+  font-size: 11.5px;
+  color: var(--sh-accent);
+  flex-shrink: 0;
+}
+
+.sh-sent-row.sh-connect-pick {
+  background: rgba(56, 189, 248, 0.18);
+  border-left-color: var(--sh-accent);
+  outline: 1px dashed var(--sh-accent);
+}
+
+.sh-unmerge-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  padding: 0 2px 0 0;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.sh-unmerge-btn:hover {
+  opacity: 1;
+  transform: scale(1.12);
+}
 `;

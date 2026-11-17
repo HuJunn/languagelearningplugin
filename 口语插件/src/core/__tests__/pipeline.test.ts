@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { buildTranscript, selectChineseTrack } from '../pipeline';
 import { alignManualToAsr } from '../align';
 import { parseAsrJson3, parseCustomTranscriptCues } from '../captions';
-import { findSentenceAt, findSentenceBefore } from '../segment';
+import { findSentenceAt, findSentenceBefore, mergeAdjacentSentences } from '../segment';
 
 const SUB_PATH =
   'C:\\Users\\25370\\.gemini\\antigravity\\brain\\d187e9d2-1640-4572-be69-79cd41f84792\\scratch\\subs\\nJs7YXLYu0A.en.json3';
@@ -208,5 +208,14 @@ describe('YouTube caption pipeline on nJs7YXLYu0A (I Opened A FREE Carwash)', ()
     expect(prevSent.end).toBeLessThanOrEqual(letMeSent.start);
     expect(letMeSent.words[0].text).toBe('Let');
     expect(letMeSent.words[0].start).toBeCloseTo(328.479, 2);
+
+    // Adjacent sentence merge uses first sentence start and last sentence end cleanly
+    const merged = mergeAdjacentSentences([prevSent, letMeSent], [prevSent.id]);
+    expect(merged.length).toBe(1);
+    expect(merged[0].isMerged).toBe(true);
+    expect(merged[0].start).toBe(prevSent.start);
+    expect(merged[0].end).toBe(letMeSent.end);
+    expect(merged[0].baseIds).toEqual([prevSent.id, letMeSent.id]);
+    expect(merged[0].text).toBe("It's size ten. Let me try it on.");
   });
 });

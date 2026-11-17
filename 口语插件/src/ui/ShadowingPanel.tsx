@@ -12,7 +12,12 @@ import {
   supportsLocalObsidianFileAccess,
   writeVocabToLocalObsidianFile,
 } from '../core/file-handle';
-import { findSentenceAt, findSentenceBefore } from '../core/segment';
+import {
+  DisplaySentence,
+  findSentenceAt,
+  findSentenceBefore,
+  mergeAdjacentSentences,
+} from '../core/segment';
 import { translateSentencesBatch, translateWordOnline } from '../core/translate';
 import type { UpdateCheckResult } from '../core/version';
 import type { DictEntry, Sentence, Transcript, VideoBookmark, VideoVocab, VocabItem, Word } from '../core/types';
@@ -65,6 +70,8 @@ function saveJson(key: string, val: unknown) {
     // ignore
   }
 }
+
+const SPEED_STEPS = [0.5, 0.75, 1, 1.25, 1.5] as const;
 
 export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   transcript,
@@ -127,14 +134,31 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   const videoId = transcript?.videoId || 'default';
   const [vocabItems, setVocabItems] = useState<VocabItem[]>(() => loadJson(`sh_vocab_${videoId}`, []));
   const [bookmarks, setBookmarks] = useState<VideoBookmark[]>(() => loadJson(`sh_bookmarks_${videoId}`, []));
+  const [mergeNextIds, setMergeNextIds] = useState<number[]>(() => loadJson(`sh_merges_${videoId}`, []));
+  const [connectMode, setConnectMode] = useState<boolean>(false);
+  const [connectFirstIdx, setConnectFirstIdx] = useState<number | null>(null);
+  const [playbackRate, setPlaybackRate] = useState<number>(() => {
+    const saved = loadJson<number>('sh_playback_rate', 1);
+    return (SPEED_STEPS as readonly number[]).includes(saved) ? saved : 1;
+  });
+
+  const displaySentences: DisplaySentence[] = useMemo(
+    () => mergeAdjacentSentences(transcript?.sentences ?? [], mergeNextIds),
+    [transcript, mergeNextIds],
+  );
 
   useEffect(() => {
     setVocabItems(loadJson(`sh_vocab_${videoId}`, []));
     setBookmarks(loadJson(`sh_bookmarks_${videoId}`, []));
+    setMergeNextIds(loadJson(`sh_merges_${videoId}`, []));
+    setConnectMode(false);
+    setConnectFirstIdx(null);
     setZhMap(loadJson(`sh_zh_${videoId}`, {}));
     setActiveIdx(-1);
     setPopover(null);
   }, [videoId]);
+
+  useEffect(() => saveJson('sh_playback_rate', playbackRate), [playbackRate]);
 
   useEffect(() => saveJson('sh_auto_pause', autoPause), [autoPause]);
   useEffect(() => saveJson('sh_show_zh', showZh), [showZh]);
@@ -151,7 +175,17 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   const activeIdxRef = useRef<number>(-1);
   const autoPauseRef = useRef<boolean>(autoPause);
   autoPauseRef.current = autoPause;
+  const playbackRateRef = useRef<number>(playbackRate);
+  playbackRateRef.current = playbackRate;
   const lastUriNoopAtRef = useRef<number>(0);
+
+  // 将倍速实时同步到 YouTube 播放器 <video>
+  useEffect(() => {
+    const v = getVideoElement();
+    if (v && Math.abs(v.playbackRate - playbackRate) > 0.01) {
+      v.playbackRate = playbackRate;
+    }
+  }, [playbackRate, videoId, transcript, getVideoElement]);
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -273,22 +307,25 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       stopTargetRef.current = autoPauseRef.current ? { idx: index, time: sent.end } : null;
       // 首句开头自适应预卷：有停顿时提前 220ms，紧邻上一句时提前 140ms~220ms，抵消 ASR 延迟与播放器 seek 起音淡入，防止开头吞字
       const firstWordStart = sent.words[0]?.start ?? sent.start;
-      const prevSent = index > 0 ? transcript?.sentences[index - 1] : undefined;
+      const prevSent = index > 0 ? displaySentences[index - 1] : undefined;
       const prevWordEnd = prevSent?.words[prevSent.words.length - 1]?.end ?? 0;
       const gapFromPrev = prevSent ? firstWordStart - prevWordEnd : 1;
       const preRoll = gapFromPrev >= 0.22 ? 0.22 : Math.max(0.14, Math.min(0.22, gapFromPrev + 0.08));
+      if (Math.abs(video.playbackRate - playbackRateRef.current) > 0.01) {
+        video.playbackRate = playbackRateRef.current;
+      }
       video.currentTime = Math.max(0, firstWordStart - preRoll);
       video.play().catch(() => {});
       setActiveIdx(index);
       activeIdxRef.current = index;
       centerSentenceInList(index, true);
     },
-    [getVideoElement, centerSentenceInList, transcript],
+    [getVideoElement, centerSentenceInList, displaySentences],
   );
 
   // 60fps 歌词级逐词渐变同步 & 读完本句自动暂停
   useEffect(() => {
-    const sentences = transcript?.sentences ?? [];
+    const sentences = displaySentences;
     if (!sentences.length) return;
 
     let rafId = 0;
@@ -410,7 +447,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [transcript, getVideoElement]);
+  }, [displaySentences, getVideoElement]);
 
   // 整句译文开关打开时，批量翻译当前视频的所有句子（已有自带中文字幕的句子直接复用，无需在线翻译）
   useEffect(() => {
@@ -514,7 +551,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   const handleAddBookmark = useCallback(() => {
     const video = getVideoElement();
     const curT = video?.currentTime ?? 0;
-    const sentences = transcript?.sentences ?? [];
+    const sentences = displaySentences;
     const idx =
       pinnedIdxRef.current != null
         ? pinnedIdxRef.current
@@ -539,11 +576,11 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       showToast(`已标记字幕位置 ${formatTimestamp(markTime)}（共 ${next.length} 个记录点）`);
       return next;
     });
-  }, [getVideoElement, transcript, zhMap, videoId, showToast]);
+  }, [getVideoElement, displaySentences, zhMap, videoId, showToast]);
 
   const handleJumpBookmark = useCallback(
     (bm: VideoBookmark) => {
-      const sentences = transcript?.sentences ?? [];
+      const sentences = displaySentences;
       let targetIdx = -1;
       if (bm.sentIdx != null && sentences[bm.sentIdx] && Math.abs(sentences[bm.sentIdx].start - bm.time) < 2) {
         targetIdx = bm.sentIdx;
@@ -562,7 +599,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       }
       showToast(`已跳转到标记点 ${formatTimestamp(bm.time)}`);
     },
-    [transcript, playSentence, getVideoElement, showToast],
+    [displaySentences, playSentence, getVideoElement, showToast],
   );
 
   const handleRemoveBookmark = useCallback(
@@ -590,9 +627,91 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     return best?.id ?? '';
   }, [bookmarks]);
 
+  const stepPlaybackRate = useCallback(
+    (delta: -1 | 1) => {
+      setPlaybackRate((cur) => {
+        const curIdx = SPEED_STEPS.findIndex((s) => Math.abs(s - cur) < 0.01);
+        const safeIdx = curIdx >= 0 ? curIdx : 2;
+        const nextIdx = Math.max(0, Math.min(SPEED_STEPS.length - 1, safeIdx + delta));
+        const next = SPEED_STEPS[nextIdx];
+        if (nextIdx === safeIdx) {
+          showToast(delta < 0 ? `已达最低倍速 ${next}x` : `已达最高倍速 ${next}x`);
+        } else {
+          showToast(`播放倍速：${next}x`);
+        }
+        return next;
+      });
+    },
+    [showToast],
+  );
+
+  const handleToggleConnectMode = useCallback(() => {
+    setConnectMode((prev) => {
+      const next = !prev;
+      setConnectFirstIdx(null);
+      if (next) {
+        showToast('连接模式已开启：请依次点击两个相邻句子');
+      } else {
+        showToast('已退出连接模式');
+      }
+      return next;
+    });
+  }, [showToast]);
+
+  const handleSelectForConnect = useCallback(
+    (idx: number) => {
+      if (connectFirstIdx === null) {
+        setConnectFirstIdx(idx);
+        const target = displaySentences[idx];
+        showToast(`已选中第 1 句 (${target ? formatTimestamp(target.start) : ''})，请点击紧邻的上一句或下一句`);
+        return;
+      }
+      if (connectFirstIdx === idx) {
+        setConnectFirstIdx(null);
+        showToast('已取消选中，请重新点击第 1 个句子');
+        return;
+      }
+      if (Math.abs(idx - connectFirstIdx) !== 1) {
+        showToast('⚠️ 只能连接相邻的两个句子！请重新选择紧邻的句子');
+        return;
+      }
+      const loIdx = Math.min(connectFirstIdx, idx);
+      const loSent = displaySentences[loIdx];
+      const hiSent = displaySentences[loIdx + 1];
+      if (!loSent || !hiSent) return;
+      const linkId = loSent.baseIds[loSent.baseIds.length - 1];
+      setMergeNextIds((prev) => {
+        const next = prev.includes(linkId) ? prev : [...prev, linkId];
+        saveJson(`sh_merges_${videoId}`, next);
+        return next;
+      });
+      stopTargetRef.current = null;
+      pinnedIdxRef.current = null;
+      setConnectMode(false);
+      setConnectFirstIdx(null);
+      showToast(`已连接两个相邻句子（时间起点 ${formatTimestamp(loSent.start)}）`);
+    },
+    [connectFirstIdx, displaySentences, videoId, showToast],
+  );
+
+  const handleUnmergeSentence = useCallback(
+    (sent: DisplaySentence) => {
+      const linksToRemove = new Set(sent.baseIds.slice(0, -1));
+      setMergeNextIds((prev) => {
+        const next = prev.filter((id) => !linksToRemove.has(id));
+        saveJson(`sh_merges_${videoId}`, next);
+        return next;
+      });
+      stopTargetRef.current = null;
+      pinnedIdxRef.current = null;
+      showToast('已取消句子连接');
+    },
+    [videoId, showToast],
+  );
+
   const bookmarkedSentIndices = useMemo(() => {
     const set = new Set<number>();
-    const sentences = transcript?.sentences ?? [];
+    const sentences = displaySentences;
     if (!sentences.length || !bookmarks.length) return set;
     for (const bm of bookmarks) {
       if (bm.sentIdx != null && sentences[bm.sentIdx] && Math.abs(sentences[bm.sentIdx].start - bm.time) < 2) {
@@ -603,11 +722,11 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       }
     }
     return set;
-  }, [transcript, bookmarks]);
+  }, [displaySentences, bookmarks]);
 
   // 快捷键支持（在 H 隐藏模式下也全程保持生效）
   useEffect(() => {
-    const sentences = transcript?.sentences ?? [];
+    const sentences = displaySentences;
 
     const onKeyDown = (e: KeyboardEvent) => {
       const path = e.composedPath?.() ?? [];
@@ -616,6 +735,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
           node instanceof HTMLElement &&
           (node.tagName === 'INPUT' ||
             node.tagName === 'TEXTAREA' ||
+            node.tagName === 'SELECT' ||
             node.isContentEditable ||
             node.id === 'search-input' ||
             node.id === 'contenteditable-root' ||
@@ -671,18 +791,31 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
         e.preventDefault();
         e.stopPropagation();
         handleAddBookmark();
+      } else if (e.key === '[' || (!e.shiftKey && e.code === 'BracketLeft')) {
+        e.preventDefault();
+        e.stopPropagation();
+        stepPlaybackRate(-1);
+      } else if (e.key === ']' || (!e.shiftKey && e.code === 'BracketRight')) {
+        e.preventDefault();
+        e.stopPropagation();
+        stepPlaybackRate(1);
+      } else if (e.key === 'Escape' && connectMode) {
+        e.preventDefault();
+        e.stopPropagation();
+        setConnectMode(false);
+        setConnectFirstIdx(null);
       }
     };
 
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [transcript, getVideoElement, playSentence, showToast, handleAddBookmark]);
+  }, [displaySentences, getVideoElement, playSentence, showToast, handleAddBookmark, stepPlaybackRate, connectMode]);
 
   // Mode C 拖拽移动
   const handleHeaderMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (effectiveMode !== 'C') return;
     const target = e.target as HTMLElement;
-    if (target.closest('button, label, input')) return;
+    if (target.closest('button, label, input, select')) return;
     e.preventDefault();
     const startX = e.clientX - pos.x;
     const startY = e.clientY - pos.y;
@@ -989,6 +1122,31 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
             </button>
 
             <button
+              className={`sh-btn ${connectMode ? 'sh-btn-active' : ''}`}
+              onClick={handleToggleConnectMode}
+              title="连接两个相邻的句子，连接后以首句作为时间点，点击时间左侧 ❎ 可取消"
+            >
+              🔗 {connectMode ? '连接中...' : '连接'}
+            </button>
+
+            <select
+              className="sh-speed-select"
+              value={playbackRate}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                setPlaybackRate(v);
+                showToast(`播放倍速：${v}x`);
+              }}
+              title="调节视频倍速（快捷键 [ 减速 / ] 加速）"
+            >
+              {SPEED_STEPS.map((sp) => (
+                <option key={sp} value={sp}>
+                  {sp}x
+                </option>
+              ))}
+            </select>
+
+            <button
               className={`sh-btn ${drawer === 'calibrate' ? 'sh-btn-active' : ''}`}
               onClick={() => setDrawer(drawer === 'calibrate' ? 'none' : 'calibrate')}
               title="用人工字幕/剪藏文本对比校准自动字幕，替换差异词并保留逐词时间"
@@ -1036,6 +1194,20 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
             </button>
             <button className="sh-btn" onClick={() => setSizeC({ w: 540, h: 600 })}>
               宽屏
+            </button>
+          </div>
+        )}
+
+        {/* 句子连接引导提示条 */}
+        {connectMode && (
+          <div className="sh-connect-bar">
+            <span>
+              {connectFirstIdx === null
+                ? '🔗 请点击第 1 个要连接的句子'
+                : `🔗 已选中 #${connectFirstIdx + 1} (${formatTimestamp(displaySentences[connectFirstIdx]?.start ?? 0)})，请点击紧邻的上一句或下一句`}
+            </span>
+            <button className="sh-btn" onClick={handleToggleConnectMode}>
+              取消
             </button>
           </div>
         )}
@@ -1211,7 +1383,13 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                 • <span className="sh-kbd">T</span>：开关「整句中文译文」
               </div>
               <div>
+                • <span className="sh-kbd">[</span> / <span className="sh-kbd">]</span>：播放倍速减速 / 加速（0.5x~1.5x）
+              </div>
+              <div>
                 • <span className="sh-kbd">M</span>：标记当前字幕位置（支持多个标记点）
+              </div>
+              <div>
+                • <b>🔗 连接</b>：依次点选相邻两句合并，点时间左侧 ❎ 取消连接
               </div>
               <div>
                 • <span className="sh-kbd">H</span>：打开 / 临时隐藏窗口（隐藏后 A/D/R 等快捷键仍有效）
@@ -1357,19 +1535,45 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
           ) : (
             <>
               <div className="sh-list-spacer" />
-              {transcript.sentences.map((sent, idx) => {
+              {displaySentences.map((sent, idx) => {
                 const isActive = idx === activeIdx;
                 const isBookmarked = bookmarkedSentIndices.has(idx);
-                const zh = zhMap[sent.id];
+                const isConnectPick = connectMode && connectFirstIdx === idx;
+                const mergedZhParts: string[] = [];
+                if (showZh) {
+                  for (const bid of sent.baseIds) {
+                    const baseSent = transcript?.sentences.find((b) => b.id === bid);
+                    const piece = baseSent?.builtInZh || zhMap[bid];
+                    if (piece && !mergedZhParts.includes(piece)) mergedZhParts.push(piece);
+                  }
+                }
+                const zhDisplay = mergedZhParts.join(' ');
                 return (
                   <div
-                    key={sent.id}
+                    key={`${sent.id}_${sent.baseIds.length}`}
                     data-sent-idx={idx}
-                    className={`sh-sent-row ${isActive ? 'sh-active' : ''} ${isBookmarked ? 'sh-bookmarked' : ''}`}
-                    onClick={() => playSentence(sent, idx)}
-                    title="点击空白处或时间戳跳转到此句开头播放"
+                    className={`sh-sent-row ${isActive ? 'sh-active' : ''} ${isBookmarked ? 'sh-bookmarked' : ''} ${isConnectPick ? 'sh-connect-pick' : ''}`}
+                    onClick={() => (connectMode ? handleSelectForConnect(idx) : playSentence(sent, idx))}
+                    title={
+                      connectMode
+                        ? '点击选择此句子进行相邻连接'
+                        : '点击空白处或时间戳跳转到此句开头播放'
+                    }
                   >
                     <div className="sh-time-col">
+                      {sent.isMerged && (
+                        <button
+                          type="button"
+                          className="sh-unmerge-btn"
+                          title="取消连接（恢复为原来的句子）"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleUnmergeSentence(sent);
+                          }}
+                        >
+                          ❎
+                        </button>
+                      )}
                       <span className="sh-play-icon">{isActive ? '▶' : isBookmarked ? '🔖' : '•'}</span>
                       <span>{formatTimestamp(sent.start)}</span>
                     </div>
@@ -1379,7 +1583,10 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                           <React.Fragment key={wIdx}>
                             <span
                               className={`sh-word ${w.asrText ? 'sh-corrected' : ''}`}
-                              onClick={(e) => handleWordClick(e, w, sent)}
+                              onClick={(e) => {
+                                if (connectMode) return;
+                                handleWordClick(e, w, sent);
+                              }}
                               title={
                                 w.asrText
                                   ? `已用人工字幕替换（自动字幕原词: "${w.asrText}"）· 单击查词`
@@ -1394,7 +1601,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                       </div>
                       {showZh && (
                         <div className="sh-zh-line">
-                          {sent.builtInZh || zh || (zhLoading ? '正在翻译句子...' : '')}
+                          {zhDisplay || (zhLoading ? '正在翻译句子...' : '')}
                         </div>
                       )}
                     </div>
