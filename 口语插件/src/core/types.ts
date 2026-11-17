@@ -57,9 +57,13 @@ export interface DictEntry {
 
 export interface VocabItem {
   word: string;
+  /** 原句中的原始词形（如复数/大写形态），用于表格语境加粗高亮 */
+  rawWord?: string;
   phonetic: string;
   meaning: string;
   sentence: string;
+  /** 原句对应的中文译文（优先视频自带中文字幕，其次缓存或在线句意） */
+  sentenceZh?: string;
   time: number;
   addedAt: number;
 }
@@ -69,4 +73,13 @@ export interface VideoVocab {
   url: string;
   title: string;
   items: VocabItem[];
+}
+
+export interface VideoBookmark {
+  id: string;
+  time: number;
+  sentIdx?: number;
+  text: string;
+  zh?: string;
+  createdAt: number;
 }

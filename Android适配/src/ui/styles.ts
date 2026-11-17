@@ -536,4 +536,72 @@ export const PANEL_CSS = `
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   font-size: 12.5px;
 }
+
+/* 长视频标记点栏 */
+.sh-bookmark-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: rgba(251, 191, 36, 0.08);
+  border-bottom: 1px solid var(--sh-border);
+  font-size: 11.5px;
+  color: var(--sh-warn);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sh-bookmark-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.sh-bm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.14);
+  color: #fde68a;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.sh-bm-chip:hover {
+  background: rgba(251, 191, 36, 0.28);
+  border-color: rgba(251, 191, 36, 0.8);
+}
+
+.sh-bm-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  padding: 0 2px;
+  border-radius: 4px;
+  color: #fcd34d;
+  opacity: 0.7;
+  font-weight: 700;
+}
+
+.sh-bm-del:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.sh-sent-row.sh-bookmarked {
+  background: rgba(251, 191, 36, 0.07);
+  border-left-color: var(--sh-warn);
+}
+
+.sh-sent-row.sh-active.sh-bookmarked {
+  background: var(--sh-active-bg);
+  border-left-color: var(--sh-accent);
+}
 `;

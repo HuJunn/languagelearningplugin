@@ -330,9 +330,7 @@ const App: React.FC<{ hostEl: HTMLElement }> = ({ hostEl }) => {
     return document.querySelector<HTMLVideoElement>('video.html5-main-video, video');
   }, []);
 
-  if (!visible) return null;
-
-  // 只在视频观看页 (/watch 或 /shorts/) 显示面板
+  // 只在视频观看页 (/watch 或 /shorts/) 挂载面板（隐藏状态仍保持挂载，确保 H 隐藏后 A/D/R 等快捷键继续可用）
   const isWatchPage = location.pathname === '/watch' || location.pathname.startsWith('/shorts/');
   if (!isWatchPage) return null;
 
@@ -353,6 +351,7 @@ const App: React.FC<{ hostEl: HTMLElement }> = ({ hostEl }) => {
       onApplyCustomManualText={handleApplyCustomManualText}
       onClearCustomManualText={handleClearCustomManualText}
       getVideoElement={getVideoElement}
+      visible={visible}
       onClose={() => setVisible(false)}
     />
   );

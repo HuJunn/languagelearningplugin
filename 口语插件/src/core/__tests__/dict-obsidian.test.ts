@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import { lookupOfflineDict, CompactDict } from '../dict';
-import { formatVideoVocabSection, mergeVocabIntoMarkdown, OBSIDIAN_OPEN_URI } from '../obsidian';
+import {
+  buildObsidianAppendUri,
+  formatVideoVocabSection,
+  mergeVocabIntoMarkdown,
+  OBSIDIAN_OPEN_URI,
+} from '../obsidian';
 import { compareSemver, parseAndroidUpdatesXml } from '../version';
 
 const dict: CompactDict = JSON.parse(fs.readFileSync('public/dict.json', 'utf8'));
@@ -33,8 +38,8 @@ describe('Offline ECDICT dictionary + lemmatizer', () => {
   });
 });
 
-describe('Obsidian vocabulary markdown formatter & merger', () => {
-  it('groups vocabulary by original video link and deduplicates on repeated merges', () => {
+describe('Obsidian vocabulary markdown formatter & merger (table-view template)', () => {
+  it('formats video vocabulary using table-view template and deduplicates on repeated merges', () => {
     expect(OBSIDIAN_OPEN_URI).toBe('obsidian://open?vault=codex-obsidian&file=languagelearning%2F%E7%94%9F%E8%AF%8D%E8%A1%A8');
 
     const v1 = {
@@ -47,6 +52,7 @@ describe('Obsidian vocabulary markdown formatter & merger', () => {
           phonetic: '/ˌprɑpəˈzɪʃn/',
           meaning: 'n. 提议，建议',
           sentence: 'I have a proposition for you.',
+          sentenceZh: '我有个提议要跟你说。',
           time: 18,
           addedAt: 1,
         },
@@ -54,11 +60,14 @@ describe('Obsidian vocabulary markdown formatter & merger', () => {
     };
 
     const md1 = mergeVocabIntoMarkdown('', v1);
-    expect(md1).toContain('# 生词表');
-    expect(md1).toContain('## [I Opened A FREE Carwash](https://www.youtube.com/watch?v=nJs7YXLYu0A)');
-    expect(md1).toContain('- **proposition** `/ˌprɑpəˈzɪʃn/` — n. 提议，建议 · [0:18](https://www.youtube.com/watch?v=nJs7YXLYu0A&t=18s)');
+    expect(md1).toContain('tags: [vocabulary, table-view]');
+    expect(md1).toContain('# I Opened A FREE Carwash');
+    expect(md1).toContain('| 时间 | 词汇与音标 | 词性与核心释义 | 原声双语语境 |');
+    expect(md1).toContain(
+      '| [0:18](https://www.youtube.com/watch?v=nJs7YXLYu0A&t=18s) | **proposition**<br>`/ˌprɑpəˈzɪʃn/` | `n.` 提议，建议 | I have a **proposition** for you.<br>*我有个提议要跟你说。* |',
+    );
 
-    // Merge another word into the same video section
+    // Merge another word into the same video table
     const v1More = {
       ...v1,
       items: [
@@ -66,7 +75,7 @@ describe('Obsidian vocabulary markdown formatter & merger', () => {
         {
           word: 'grand',
           phonetic: '/ɡrænd/',
-          meaning: 'n. 一千美元',
+          meaning: 'n. 一千美元；adj. 宏伟的',
           sentence: "he's going to hand me 10 grand",
           time: 39,
           addedAt: 2,
@@ -74,10 +83,9 @@ describe('Obsidian vocabulary markdown formatter & merger', () => {
       ],
     };
     const md2 = mergeVocabIntoMarkdown(md1, v1More);
-    // Should still only have ONE header for this video
-    expect(md2.match(/## \[I Opened A FREE Carwash\]/g)?.length).toBe(1);
-    expect(md2).toContain('- **proposition**');
-    expect(md2).toContain('- **grand**');
+    expect(md2.match(/# I Opened A FREE Carwash/g)?.length).toBe(1);
+    expect(md2).toContain('**proposition**');
+    expect(md2).toContain('| [0:39](https://www.youtube.com/watch?v=nJs7YXLYu0A&t=39s) | **grand**<br>`/ɡrænd/` | `n.` 一千美元<br>`adj.` 宏伟的 |');
 
     // Merge a second video
     const v2 = {
@@ -96,9 +104,10 @@ describe('Obsidian vocabulary markdown formatter & merger', () => {
       ],
     };
     const md3 = mergeVocabIntoMarkdown(md2, v2);
-    expect(md3).toContain('## [I Opened A FREE Carwash](https://www.youtube.com/watch?v=nJs7YXLYu0A)');
-    expect(md3).toContain('## [Another Video](https://www.youtube.com/watch?v=abc123xyz)');
+    expect(md3).toContain('# I Opened A FREE Carwash');
+    expect(md3).toContain('# Another Video');
     expect(formatVideoVocabSection(v2)).toContain('https://www.youtube.com/watch?v=abc123xyz&t=12s');
+    expect(buildObsidianAppendUri('| row |\n', false)).not.toContain('content=%0A');
   });
 });
 

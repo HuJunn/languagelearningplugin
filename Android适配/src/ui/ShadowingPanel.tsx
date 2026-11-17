@@ -5,14 +5,14 @@ import {
   buildObsidianAppendUri,
   formatTimestamp,
   formatVideoVocabSection,
-  formatVocabItemBullet,
+  formatVocabTableRow,
   OBSIDIAN_OPEN_URI,
 } from '../core/obsidian';
 import { writeVocabToLocalObsidianFile } from '../core/file-handle';
 import { findSentenceAt, findSentenceBefore } from '../core/segment';
 import { translateSentencesBatch, translateWordOnline } from '../core/translate';
 import type { UpdateCheckResult } from '../core/version';
-import type { DictEntry, Sentence, Transcript, VideoVocab, VocabItem, Word } from '../core/types';
+import type { DictEntry, Sentence, Transcript, VideoBookmark, VideoVocab, VocabItem, Word } from '../core/types';
 
 export interface ShadowingPanelProps {
   transcript: Transcript | null;
@@ -30,6 +30,7 @@ export interface ShadowingPanelProps {
   onApplyCustomManualText: (rawText: string) => void;
   onClearCustomManualText: () => void;
   getVideoElement: () => HTMLVideoElement | null;
+  visible?: boolean;
   onClose?: () => void;
 }
 
@@ -78,6 +79,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   onApplyCustomManualText,
   onClearCustomManualText,
   getVideoElement,
+  visible = true,
   onClose,
 }) => {
   // 全屏时自动切换为 C（悬浮模式），退出全屏后自动恢复用户选择的 mode
@@ -99,16 +101,16 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   const [zhMap, setZhMap] = useState<Record<number, string>>({});
   const [zhLoading, setZhLoading] = useState<boolean>(false);
 
-  const [drawer, setDrawer] = useState<'none' | 'vocab' | 'calibrate' | 'help'>('none');
+  const [drawer, setDrawer] = useState<'none' | 'vocab' | 'calibrate' | 'help' | 'bookmarks'>('none');
   const [calibInput, setCalibInput] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [gamepadConnected, setGamepadConnected] = useState<boolean>(false);
 
   const currentVersion = useMemo(() => {
     try {
-      return chrome?.runtime?.getManifest?.()?.version || '0.1.5';
+      return chrome?.runtime?.getManifest?.()?.version || '0.1.7';
     } catch {
-      return '0.1.5';
+      return '0.1.7';
     }
   }, []);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
@@ -116,9 +118,11 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
 
   const videoId = transcript?.videoId || 'default';
   const [vocabItems, setVocabItems] = useState<VocabItem[]>(() => loadJson(`sh_vocab_${videoId}`, []));
+  const [bookmarks, setBookmarks] = useState<VideoBookmark[]>(() => loadJson(`sh_bookmarks_${videoId}`, []));
 
   useEffect(() => {
     setVocabItems(loadJson(`sh_vocab_${videoId}`, []));
+    setBookmarks(loadJson(`sh_bookmarks_${videoId}`, []));
     setZhMap(loadJson(`sh_zh_${videoId}`, {}));
     setActiveIdx(-1);
     setPopover(null);
@@ -479,10 +483,104 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     [dict],
   );
 
-  // 快捷键支持 (问题6)
+  // 标记当前字幕位置（支持同一视频多条记录点）
+  const handleAddBookmark = useCallback(() => {
+    const video = getVideoElement();
+    const curT = video?.currentTime ?? 0;
+    const sentences = transcript?.sentences ?? [];
+    const idx =
+      pinnedIdxRef.current != null
+        ? pinnedIdxRef.current
+        : activeIdxRef.current >= 0
+          ? activeIdxRef.current
+          : sentences.length
+            ? findSentenceBefore(sentences, curT)
+            : -1;
+    const sent = idx >= 0 ? sentences[idx] : undefined;
+    const markTime = sent ? sent.start : curT;
+    const entry: VideoBookmark = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      time: markTime,
+      ...(idx >= 0 ? { sentIdx: idx } : {}),
+      text: sent?.text || `时间点 ${formatTimestamp(markTime)}`,
+      ...(sent && (sent.builtInZh || zhMap[sent.id]) ? { zh: sent.builtInZh || zhMap[sent.id] } : {}),
+      createdAt: Date.now(),
+    };
+    setBookmarks((prev) => {
+      const next = [...prev, entry].sort((a, b) => a.time - b.time);
+      saveJson(`sh_bookmarks_${videoId}`, next);
+      showToast(`已标记字幕位置 ${formatTimestamp(markTime)}（共 ${next.length} 个记录点）`);
+      return next;
+    });
+  }, [getVideoElement, transcript, zhMap, videoId, showToast]);
+
+  const handleJumpBookmark = useCallback(
+    (bm: VideoBookmark) => {
+      const sentences = transcript?.sentences ?? [];
+      let targetIdx = -1;
+      if (bm.sentIdx != null && sentences[bm.sentIdx] && Math.abs(sentences[bm.sentIdx].start - bm.time) < 2) {
+        targetIdx = bm.sentIdx;
+      } else if (sentences.length > 0) {
+        const byStart = sentences.findIndex((s) => Math.abs(s.start - bm.time) < 1.2);
+        targetIdx = byStart >= 0 ? byStart : Math.max(0, findSentenceBefore(sentences, bm.time));
+      }
+      if (targetIdx >= 0 && sentences[targetIdx]) {
+        playSentence(sentences[targetIdx], targetIdx);
+      } else {
+        const video = getVideoElement();
+        if (video) {
+          video.currentTime = Math.max(0, bm.time);
+          video.play().catch(() => {});
+        }
+      }
+      showToast(`已跳转到标记点 ${formatTimestamp(bm.time)}`);
+    },
+    [transcript, playSentence, getVideoElement, showToast],
+  );
+
+  const handleRemoveBookmark = useCallback(
+    (id: string) => {
+      setBookmarks((prev) => {
+        const next = prev.filter((b) => b.id !== id);
+        saveJson(`sh_bookmarks_${videoId}`, next);
+        return next;
+      });
+    },
+    [videoId],
+  );
+
+  const handleClearBookmarks = useCallback(() => {
+    setBookmarks([]);
+    saveJson(`sh_bookmarks_${videoId}`, []);
+    showToast('已清空本视频全部标记点');
+  }, [videoId, showToast]);
+
+  const latestBookmarkId = useMemo(() => {
+    let best: VideoBookmark | null = null;
+    for (const bm of bookmarks) {
+      if (!best || bm.createdAt > best.createdAt) best = bm;
+    }
+    return best?.id ?? '';
+  }, [bookmarks]);
+
+  const bookmarkedSentIndices = useMemo(() => {
+    const set = new Set<number>();
+    const sentences = transcript?.sentences ?? [];
+    if (!sentences.length || !bookmarks.length) return set;
+    for (const bm of bookmarks) {
+      if (bm.sentIdx != null && sentences[bm.sentIdx] && Math.abs(sentences[bm.sentIdx].start - bm.time) < 2) {
+        set.add(bm.sentIdx);
+      } else {
+        const idx = sentences.findIndex((s) => Math.abs(s.start - bm.time) < 1.2);
+        if (idx >= 0) set.add(idx);
+      }
+    }
+    return set;
+  }, [transcript, bookmarks]);
+
+  // 快捷键支持（在 H 隐藏模式下也全程保持生效）
   useEffect(() => {
     const sentences = transcript?.sentences ?? [];
-    if (!sentences.length) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       const path = e.composedPath?.() ?? [];
@@ -508,41 +606,50 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
           ? pinnedIdxRef.current
           : activeIdxRef.current >= 0
             ? activeIdxRef.current
-            : Math.max(0, findSentenceBefore(sentences, curT));
+            : sentences.length
+              ? Math.max(0, findSentenceBefore(sentences, curT))
+              : 0;
 
       const key = e.key.toLowerCase();
-      if (key === 'r' || key === 's') {
+      if ((key === 'r' || key === 's') && sentences.length) {
         e.preventDefault();
+        e.stopPropagation();
         const target = sentences[Math.max(0, curIdx)];
         if (target) playSentence(target, Math.max(0, curIdx));
-      } else if (key === 'a' || e.key === 'ArrowLeft') {
-        // 仅在按下 A 或 Shift+ArrowLeft 时切换上一句，避免干扰部分用户但同时支持直观快捷键
-        if (key === 'a' || e.shiftKey) {
-          e.preventDefault();
-          const prevIdx = Math.max(0, curIdx - 1);
-          if (sentences[prevIdx]) playSentence(sentences[prevIdx], prevIdx);
-        }
-      } else if (key === 'd' || e.key === 'ArrowRight') {
-        if (key === 'd' || e.shiftKey) {
-          e.preventDefault();
-          const nextIdx = Math.min(sentences.length - 1, curIdx + 1);
-          if (sentences[nextIdx]) playSentence(sentences[nextIdx], nextIdx);
-        }
+      } else if ((key === 'a' || (e.key === 'ArrowLeft' && e.shiftKey)) && sentences.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        const prevIdx = Math.max(0, curIdx - 1);
+        if (sentences[prevIdx]) playSentence(sentences[prevIdx], prevIdx);
+      } else if ((key === 'd' || (e.key === 'ArrowRight' && e.shiftKey)) && sentences.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        const nextIdx = Math.min(sentences.length - 1, curIdx + 1);
+        if (sentences[nextIdx]) playSentence(sentences[nextIdx], nextIdx);
       } else if (key === 'p' || key === 'q') {
         e.preventDefault();
+        e.stopPropagation();
         setAutoPause((v) => {
           showToast(`读完自动暂停：${!v ? '已开启' : '已关闭'}`);
           return !v;
         });
       } else if (key === 't') {
         e.preventDefault();
-        setShowZh((v) => !v);
+        e.stopPropagation();
+        setShowZh((v) => {
+          showToast(`整句译文：${!v ? '已开启' : '已关闭'}`);
+          return !v;
+        });
+      } else if (key === 'm') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleAddBookmark();
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [transcript, getVideoElement, playSentence, showToast]);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [transcript, getVideoElement, playSentence, showToast, handleAddBookmark]);
 
   // 蓝牙手柄 (Web Gamepad API) 轮询支持：兼容 Xbox / Switch Joy-Con / 八位堂等蓝牙手柄
   useEffect(() => {
@@ -747,11 +854,14 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     } else {
       const meaning = pop.offline?.translation || pop.onlineWord || '（待补充释义）';
       const phonetic = pop.offline?.phonetic || '';
+      const sentenceZh = pop.sentence.builtInZh || zhMap[pop.sentence.id] || pop.onlineSentence || undefined;
       const item: VocabItem = {
         word: wordKey,
+        rawWord: pop.cleaned,
         phonetic,
         meaning,
         sentence: pop.sentence.text,
+        ...(sentenceZh ? { sentenceZh } : {}),
         time: pop.sentence.start,
         addedAt: Date.now(),
       };
@@ -762,32 +872,50 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     saveJson(`sh_vocab_${videoId}`, next);
   };
 
+  const enrichedVocabItems = useMemo(() => {
+    const sentences = transcript?.sentences ?? [];
+    return vocabItems.map((item) => {
+      if (item.sentenceZh) return item;
+      const matchedSent =
+        sentences.find((s) => Math.abs(s.start - item.time) < 1.2 || s.text === item.sentence) ?? null;
+      const fallbackZh = matchedSent ? matchedSent.builtInZh || zhMap[matchedSent.id] : undefined;
+      return fallbackZh ? { ...item, sentenceZh: fallbackZh } : item;
+    });
+  }, [vocabItems, transcript, zhMap]);
+
   const currentVideoVocab: VideoVocab = useMemo(
     () => ({
       videoId,
       url: videoUrl || `https://www.youtube.com/watch?v=${videoId}`,
       title: videoTitle || videoId,
-      items: vocabItems,
+      items: enrichedVocabItems,
     }),
-    [videoId, videoUrl, videoTitle, vocabItems],
+    [videoId, videoUrl, videoTitle, enrichedVocabItems],
   );
 
-  // 方式1：通过 Obsidian 官方 URI 直接追加到 languagelearning/生词表
+  // 方式1：通过 Obsidian 官方 URI 直接追加到 languagelearning/生词表（使用《界面选型》表格模板）
   const handleObsidianUriExport = () => {
-    if (!vocabItems.length) {
+    if (!enrichedVocabItems.length) {
       showToast('请先点击字幕中的单词并加入生词本');
       return;
     }
     const exportedKey = `sh_exported_${videoId}`;
     const alreadyExported = new Set<string>(loadJson<string[]>(exportedKey, []));
-    const newItems = vocabItems.filter((i) => !alreadyExported.has(i.word.toLowerCase()));
+    const newItems = enrichedVocabItems.filter((i) => !alreadyExported.has(i.word.toLowerCase()));
 
-    let contentToAppend: string;
+    let uri: string;
     if (alreadyExported.size === 0) {
-      contentToAppend = '\n---\n\n' + formatVideoVocabSection(currentVideoVocab);
+      const hasPriorOtherVideo = loadJson<boolean>('sh_obsidian_any_exported', false);
+      const sectionMd = formatVideoVocabSection(currentVideoVocab, !hasPriorOtherVideo);
+      uri = buildObsidianAppendUri(
+        hasPriorOtherVideo ? `---\n\n${sectionMd}` : sectionMd,
+        hasPriorOtherVideo,
+      );
+      saveJson('sh_obsidian_any_exported', true);
     } else if (newItems.length > 0) {
       const cleanUrl = currentVideoVocab.url;
-      contentToAppend = newItems.map((item) => formatVocabItemBullet(item, cleanUrl)).join('\n') + '\n';
+      const rowsMd = newItems.map((item) => formatVocabTableRow(item, cleanUrl)).join('\n') + '\n';
+      uri = buildObsidianAppendUri(rowsMd, false);
     } else {
       // 全部已导出过，直接打开 Obsidian 生词表
       window.open(OBSIDIAN_OPEN_URI, '_blank');
@@ -795,17 +923,16 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       return;
     }
 
-    const allExported = Array.from(new Set([...alreadyExported, ...vocabItems.map((i) => i.word.toLowerCase())]));
+    const allExported = Array.from(new Set([...alreadyExported, ...enrichedVocabItems.map((i) => i.word.toLowerCase())]));
     saveJson(exportedKey, allExported);
 
-    const uri = buildObsidianAppendUri(contentToAppend);
     window.open(uri, '_blank');
-    showToast(`已通过 Obsidian URI 追加 ${newItems.length || vocabItems.length} 个生词到「languagelearning/生词表」`);
+    showToast(`已按《界面选型》表格模板追加 ${newItems.length || enrichedVocabItems.length} 个生词到 Obsidian`);
   };
 
   // 方式2：直接写入本地《生词表.md》并按视频链接原位合并去重
   const handleLocalFileMergeExport = async (forcePick = false) => {
-    if (!vocabItems.length) {
+    if (!enrichedVocabItems.length) {
       showToast('请先点击字幕中的单词并加入生词本');
       return;
     }
@@ -817,20 +944,20 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     }
   };
 
-  // 方式3：复制 Markdown 分割区块并打开 Obsidian 生词表
+  // 方式3：复制《界面选型》表格模板 Markdown 并打开 Obsidian 生词表
   const handleCopyAndOpenObsidian = async () => {
-    if (!vocabItems.length) {
+    if (!enrichedVocabItems.length) {
       showToast('请先点击字幕中的单词并加入生词本');
       return;
     }
-    const md = formatVideoVocabSection(currentVideoVocab);
+    const md = formatVideoVocabSection(currentVideoVocab, true);
     try {
       await navigator.clipboard.writeText(md);
     } catch {
       // ignore
     }
     window.open(OBSIDIAN_OPEN_URI, '_blank');
-    showToast('已复制该视频生词 Markdown 并打开 Obsidian 生词表');
+    showToast('已复制《界面选型》表格模板 Markdown 并打开 Obsidian 生词表');
   };
 
   const sourceBadge = useMemo(() => {
@@ -862,7 +989,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     <div className="sh-root">
       <div
         className={`sh-panel ${effectiveMode === 'C' ? 'sh-mode-c' : 'sh-mode-d'}`}
-        style={panelStyle}
+        style={{ ...panelStyle, ...(visible ? {} : { display: 'none' }) }}
         onTouchStart={(e) => e.stopPropagation()}
         onTouchMove={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
@@ -930,6 +1057,22 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
             </label>
 
             <button
+              className="sh-btn"
+              onClick={handleAddBookmark}
+              title="标记当前字幕位置，方便长视频下次打开快速定位（可添加多个，快捷键 M）"
+            >
+              🔖 标记
+            </button>
+
+            <button
+              className={`sh-btn ${drawer === 'bookmarks' ? 'sh-btn-active' : ''}`}
+              onClick={() => setDrawer(drawer === 'bookmarks' ? 'none' : 'bookmarks')}
+              title="查看并管理本视频的所有位置标记点"
+            >
+              📍 {bookmarks.length}
+            </button>
+
+            <button
               className={`sh-btn ${drawer === 'calibrate' ? 'sh-btn-active' : ''}`}
               onClick={() => setDrawer(drawer === 'calibrate' ? 'none' : 'calibrate')}
               title="用人工字幕/剪藏文本对比校准自动字幕，替换差异词并保留逐词时间"
@@ -978,6 +1121,104 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
             <button className="sh-btn" onClick={() => setSizeC({ w: 540, h: 600 })}>
               宽屏
             </button>
+          </div>
+        )}
+
+        {/* 长视频标记点快捷跳转栏 */}
+        {bookmarks.length > 0 && (
+          <div className="sh-bookmark-bar">
+            <span style={{ flexShrink: 0, fontWeight: 600 }}>📍 标记点:</span>
+            {bookmarks.map((bm) => (
+              <span
+                key={bm.id}
+                className="sh-bm-chip"
+                onClick={() => handleJumpBookmark(bm)}
+                title={`${bm.id === latestBookmarkId ? '[最新标记] ' : ''}${formatTimestamp(bm.time)} · ${bm.text}`}
+              >
+                <span>
+                  {bm.id === latestBookmarkId ? '★ ' : ''}
+                  {formatTimestamp(bm.time)}
+                </span>
+                <span
+                  className="sh-bm-del"
+                  title="删除此标记点"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveBookmark(bm.id);
+                  }}
+                >
+                  ×
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* 抽屉 0：长视频标记点列表 */}
+        {drawer === 'bookmarks' && (
+          <div className="sh-drawer">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <b>📍 视频位置标记点 ({bookmarks.length}) · 自动按视频保存</b>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button className="sh-btn sh-btn-active" onClick={handleAddBookmark}>
+                  ＋ 标记当前位置
+                </button>
+                {bookmarks.length > 0 && (
+                  <button className="sh-btn" onClick={handleClearBookmarks}>
+                    清空
+                  </button>
+                )}
+                <button className="sh-btn" onClick={() => setDrawer('none')}>
+                  收起
+                </button>
+              </div>
+            </div>
+            {bookmarks.length === 0 ? (
+              <div style={{ color: 'var(--sh-muted)' }}>
+                暂无标记点。观看长视频时随时点击工具栏「🔖 标记」（或按 M 键）即可记录多个观看位置。
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {bookmarks.map((bm) => (
+                  <div
+                    key={bm.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '5px 8px',
+                      borderRadius: 6,
+                      background: 'rgba(251, 191, 36, 0.08)',
+                      border: '1px solid rgba(251, 191, 36, 0.25)',
+                    }}
+                  >
+                    <button
+                      className="sh-btn sh-btn-active"
+                      onClick={() => handleJumpBookmark(bm)}
+                      title="跳转到此位置播放"
+                    >
+                      ▶ {formatTimestamp(bm.time)}
+                    </button>
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#fff' }}>
+                        {bm.id === latestBookmarkId && (
+                          <span style={{ color: 'var(--sh-warn)', marginRight: 5, fontSize: 11 }}>[最新]</span>
+                        )}
+                        {bm.text}
+                      </div>
+                      {bm.zh && (
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--sh-muted)', fontSize: 11 }}>
+                          {bm.zh}
+                        </div>
+                      )}
+                    </div>
+                    <button className="sh-btn" onClick={() => handleRemoveBookmark(bm.id)}>
+                      删除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -1054,7 +1295,10 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                 • <span className="sh-kbd">T</span>：开关「整句中文译文」
               </div>
               <div>
-                • <span className="sh-kbd">H</span>：打开 / 临时隐藏跟读窗口
+                • <span className="sh-kbd">M</span>：标记当前字幕位置（支持多个标记点）
+              </div>
+              <div>
+                • <span className="sh-kbd">H</span>：打开 / 临时隐藏窗口（隐藏后 A/D/R 等快捷键仍有效）
               </div>
               <div>
                 • <b>🎮 蓝牙手柄</b>：A/R2 重听 · 左/上/L1 上句 · 右/下/R1 下句 · B 播放/暂停 · X 译文 · Y 读完暂停 · Select 隐藏
@@ -1195,17 +1439,18 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
               <div className="sh-list-spacer" />
               {transcript.sentences.map((sent, idx) => {
                 const isActive = idx === activeIdx;
+                const isBookmarked = bookmarkedSentIndices.has(idx);
                 const zh = zhMap[sent.id];
                 return (
                   <div
                     key={sent.id}
                     data-sent-idx={idx}
-                    className={`sh-sent-row ${isActive ? 'sh-active' : ''}`}
+                    className={`sh-sent-row ${isActive ? 'sh-active' : ''} ${isBookmarked ? 'sh-bookmarked' : ''}`}
                     onClick={() => playSentence(sent, idx)}
                     title="点击空白处或时间戳跳转到此句开头播放"
                   >
                     <div className="sh-time-col">
-                      <span className="sh-play-icon">{isActive ? '▶' : '•'}</span>
+                      <span className="sh-play-icon">{isActive ? '▶' : isBookmarked ? '🔖' : '•'}</span>
                       <span>{formatTimestamp(sent.start)}</span>
                     </div>
                     <div className="sh-sent-body">
