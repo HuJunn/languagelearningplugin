@@ -647,6 +647,8 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     };
     const onMouseMove = (ev: MouseEvent) => moveAt(ev.clientX, ev.clientY);
     const onTouchMove = (ev: TouchEvent) => {
+      if (ev.cancelable) ev.preventDefault();
+      ev.stopPropagation();
       if (ev.touches[0]) moveAt(ev.touches[0].clientX, ev.touches[0].clientY);
     };
     const onUp = () => {
@@ -654,11 +656,13 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onUp);
+      window.removeEventListener('touchcancel', onUp);
     };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onUp);
-    window.addEventListener('touchmove', onTouchMove, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onUp);
+    window.addEventListener('touchcancel', onUp);
   };
 
   const handleHeaderMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -673,6 +677,8 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     if (effectiveMode !== 'C') return;
     const target = e.target as HTMLElement;
     if (target.closest('button, label, input') || !e.touches[0]) return;
+    if (e.cancelable) e.preventDefault();
+    e.stopPropagation();
     startHeaderDrag(e.touches[0].clientX, e.touches[0].clientY);
   };
 
@@ -695,6 +701,8 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     };
     const onMouseMove = (ev: MouseEvent) => applyDelta(ev.clientX, ev.clientY);
     const onTouchMove = (ev: TouchEvent) => {
+      if (ev.cancelable) ev.preventDefault();
+      ev.stopPropagation();
       if (ev.touches[0]) applyDelta(ev.touches[0].clientX, ev.touches[0].clientY);
     };
     const onUp = () => {
@@ -702,11 +710,13 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onUp);
+      window.removeEventListener('touchcancel', onUp);
     };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onUp);
-    window.addEventListener('touchmove', onTouchMove, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onUp);
+    window.addEventListener('touchcancel', onUp);
   };
 
   const startResize = (dir: 'r' | 'b' | 'br') => (e: React.MouseEvent) => {
@@ -716,6 +726,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   };
 
   const startResizeTouch = (dir: 'r' | 'b' | 'br') => (e: React.TouchEvent) => {
+    if (e.cancelable) e.preventDefault();
     e.stopPropagation();
     if (e.touches[0]) beginResizeAt(dir, e.touches[0].clientX, e.touches[0].clientY);
   };
@@ -849,7 +860,14 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
 
   return (
     <div className="sh-root">
-      <div className={`sh-panel ${effectiveMode === 'C' ? 'sh-mode-c' : 'sh-mode-d'}`} style={panelStyle}>
+      <div
+        className={`sh-panel ${effectiveMode === 'C' ? 'sh-mode-c' : 'sh-mode-d'}`}
+        style={panelStyle}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div
           className={`sh-header ${effectiveMode === 'C' ? 'sh-draggable' : ''}`}

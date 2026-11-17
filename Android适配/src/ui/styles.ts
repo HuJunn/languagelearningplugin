@@ -38,6 +38,7 @@ export const PANEL_CSS = `
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
   user-select: none;
   -webkit-user-select: none;
+  overscroll-behavior: contain;
 }
 
 .sh-panel.sh-mode-c {
@@ -66,6 +67,7 @@ export const PANEL_CSS = `
 
 .sh-header.sh-draggable {
   cursor: move;
+  touch-action: none;
 }
 
 .sh-title {
@@ -185,6 +187,7 @@ export const PANEL_CSS = `
   color: var(--sh-muted);
   flex-shrink: 0;
   flex-wrap: wrap;
+  touch-action: none;
 }
 
 .sh-slider-wrap {
@@ -198,6 +201,7 @@ export const PANEL_CSS = `
   height: 4px;
   accent-color: var(--sh-accent);
   cursor: pointer;
+  touch-action: pan-x;
 }
 
 /* Sentence List */
@@ -207,6 +211,9 @@ export const PANEL_CSS = `
   overflow-y: auto;
   padding: 0 8px;
   scroll-behavior: smooth;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .sh-list-spacer {
@@ -387,6 +394,7 @@ export const PANEL_CSS = `
   color: var(--sh-muted);
   flex-shrink: 0;
   flex-wrap: wrap;
+  touch-action: none;
 }
 
 .sh-kbd {
@@ -405,32 +413,35 @@ export const PANEL_CSS = `
   position: absolute;
   top: 0;
   right: 0;
-  width: 6px;
+  width: 10px;
   height: 100%;
   cursor: ew-resize;
+  touch-action: none;
 }
 .sh-resize-b {
   position: absolute;
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 6px;
+  height: 10px;
   cursor: ns-resize;
+  touch-action: none;
 }
 .sh-resize-br {
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
   cursor: nwse-resize;
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
-  padding: 2px;
+  padding: 3px;
   color: var(--sh-muted);
-  font-size: 10px;
-  opacity: 0.6;
+  font-size: 11px;
+  opacity: 0.65;
+  touch-action: none;
 }
 .sh-resize-br:hover {
   opacity: 1;
@@ -494,6 +505,8 @@ export const PANEL_CSS = `
   max-height: 240px;
   overflow-y: auto;
   font-size: 12px;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .sh-textarea {
