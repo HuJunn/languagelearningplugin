@@ -11,10 +11,28 @@ interface RawCaptionMessage {
   videoId: string;
   title: string;
   hasCaptions: boolean;
+  failReason?: string;
   manualJson3?: Json3 | null;
   manualXml?: string | null;
   asrJson3?: Json3 | null;
   asrXml?: string | null;
+}
+
+interface CaptionProgress {
+  percent: number;
+  detail: string;
+}
+
+function getWatchVideoId(): string {
+  try {
+    const u = new URL(location.href);
+    if (u.pathname === '/watch') return u.searchParams.get('v') || '';
+    const m = /^\/shorts\/([a-zA-Z0-9_-]+)/.exec(u.pathname);
+    if (m) return m[1];
+  } catch {
+    // ignore
+  }
+  return '';
 }
 
 function ensureYouTubeTheaterMode() {
@@ -79,6 +97,12 @@ const App: React.FC<{ hostEl: HTMLElement }> = ({ hostEl }) => {
   const [rawMsg, setRawMsg] = useState<RawCaptionMessage | null>(null);
   const [customCues, setCustomCues] = useState<Cue[] | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [progress, setProgress] = useState<CaptionProgress>({
+    percent: 10,
+    detail: '正在准备读取视频字幕...',
+  });
+  const [failReason, setFailReason] = useState<string>('');
+  const currentVideoIdRef = React.useRef<string>(getWatchVideoId());
 
   // 加载离线 ECDICT 词库
   useEffect(() => {
@@ -109,13 +133,37 @@ const App: React.FC<{ hostEl: HTMLElement }> = ({ hostEl }) => {
     }
   }, [hostEl, effectiveMode, isFullscreen, rawMsg?.videoId]);
 
-  // 接收主世界脚本发来的字幕数据 & 扩展图标开关消息
+  // 接收主世界脚本发来的字幕数据、进度事件 & 扩展图标开关消息
   useEffect(() => {
+    const resetForNewVideo = (vid: string) => {
+      currentVideoIdRef.current = vid;
+      setRawMsg(null);
+      setCustomCues(null);
+      setFailReason('');
+      setLoading(true);
+      setProgress({ percent: 10, detail: '正在切换视频，准备读取字幕...' });
+    };
+
     const onMessage = (e: MessageEvent) => {
       if (e.source !== window || !e.data) return;
-      if (e.data.type === 'SH_CAPTION_DATA') {
+      if (e.data.type === 'SH_CAPTION_PROGRESS') {
+        const curVid = getWatchVideoId();
+        if (!e.data.videoId || e.data.videoId === curVid) {
+          setLoading(true);
+          setFailReason('');
+          setProgress({
+            percent: Number(e.data.percent) || 15,
+            detail: String(e.data.detail || '正在获取字幕...'),
+          });
+        }
+      } else if (e.data.type === 'SH_CAPTION_DATA') {
         const msg = e.data as RawCaptionMessage;
+        const curVid = getWatchVideoId();
+        if (curVid && msg.videoId && msg.videoId !== curVid) return;
+        currentVideoIdRef.current = msg.videoId;
         setRawMsg(msg);
+        setFailReason(msg.failReason || '');
+        setProgress({ percent: 100, detail: msg.hasCaptions ? '字幕加载完成' : '未检测到可用字幕' });
         setLoading(false);
         try {
           const savedCalib = localStorage.getItem(`sh_custom_manual_${msg.videoId}`);
@@ -126,6 +174,18 @@ const App: React.FC<{ hostEl: HTMLElement }> = ({ hostEl }) => {
       }
     };
     window.addEventListener('message', onMessage);
+
+    const checkUrlChanged = () => {
+      const vid = getWatchVideoId();
+      if (vid && vid !== currentVideoIdRef.current) {
+        resetForNewVideo(vid);
+        window.postMessage({ type: 'SH_REQUEST_CAPTIONS' }, '*');
+      }
+    };
+    window.addEventListener('yt-navigate-start', checkUrlChanged);
+    window.addEventListener('yt-navigate-finish', checkUrlChanged);
+    window.addEventListener('state-navigateend', checkUrlChanged);
+    const urlTimer = window.setInterval(checkUrlChanged, 600);
 
     const onExtMsg = (msg: any) => {
       if (msg?.type === 'SH_TOGGLE_PANEL') {
@@ -186,10 +246,31 @@ const App: React.FC<{ hostEl: HTMLElement }> = ({ hostEl }) => {
 
     return () => {
       window.removeEventListener('message', onMessage);
+      window.removeEventListener('yt-navigate-start', checkUrlChanged);
+      window.removeEventListener('yt-navigate-finish', checkUrlChanged);
+      window.removeEventListener('state-navigateend', checkUrlChanged);
       window.removeEventListener('keydown', onKeyDown);
+      clearInterval(urlTimer);
       clearInterval(gpTimer);
       chrome.runtime?.onMessage?.removeListener(onExtMsg);
     };
+  }, []);
+
+  // 安全超时保护：若超过 14 秒仍停留在 loading，自动退出 loading 状态并展示重试入口
+  useEffect(() => {
+    if (!loading) return;
+    const t = window.setTimeout(() => {
+      setLoading(false);
+      setFailReason((prev) => prev || '获取字幕超时（YouTube 未返回字幕数据），请点击「重新尝试获取字幕」。');
+    }, 14000);
+    return () => clearTimeout(t);
+  }, [loading, rawMsg?.videoId]);
+
+  const handleRetryCaptions = useCallback(() => {
+    setFailReason('');
+    setLoading(true);
+    setProgress({ percent: 12, detail: '正在重新尝试获取视频字幕...' });
+    window.postMessage({ type: 'SH_REQUEST_CAPTIONS' }, '*');
   }, []);
 
   const handleModeChange = useCallback((nextMode: 'C' | 'D') => {
@@ -257,6 +338,9 @@ const App: React.FC<{ hostEl: HTMLElement }> = ({ hostEl }) => {
       videoTitle={rawMsg?.title || document.title.replace(/\s*-\s*YouTube$/, '')}
       videoUrl={location.href}
       loading={loading}
+      progress={progress}
+      failReason={failReason}
+      onRetryCaptions={handleRetryCaptions}
       mode={mode}
       onModeChange={handleModeChange}
       isFullscreen={isFullscreen}

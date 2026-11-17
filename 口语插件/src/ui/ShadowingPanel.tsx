@@ -19,6 +19,9 @@ export interface ShadowingPanelProps {
   videoTitle: string;
   videoUrl: string;
   loading: boolean;
+  progress: { percent: number; detail: string };
+  failReason?: string;
+  onRetryCaptions: () => void;
   mode: 'C' | 'D';
   onModeChange: (mode: 'C' | 'D') => void;
   isFullscreen: boolean;
@@ -64,6 +67,9 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   videoTitle,
   videoUrl,
   loading,
+  progress,
+  failReason,
+  onRetryCaptions,
   mode,
   onModeChange,
   isFullscreen,
@@ -711,14 +717,15 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   };
 
   const sourceBadge = useMemo(() => {
-    if (!transcript) return '加载中';
+    if (loading) return `获取字幕 ${Math.round(progress.percent)}%`;
+    if (!transcript || transcript.sentences.length === 0) return '未检测到字幕';
     if (transcript.source === 'manual+asr') {
       const st = transcript.alignStats;
       return st ? `人工+自动逐词对齐 (修正 ${st.substituted} 词)` : '人工+自动逐词对齐 ✓';
     }
     if (transcript.source === 'asr') return '自动字幕 · 逐词时间 ✓';
     return '人工字幕 · 智能插值';
-  }, [transcript]);
+  }, [transcript, loading, progress.percent]);
 
   const panelStyle: React.CSSProperties =
     effectiveMode === 'C'
@@ -1035,17 +1042,30 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
         {/* 句子列表主体 */}
         <div className="sh-list" ref={listRef} onScroll={() => setPopover(null)}>
           {loading ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--sh-muted)' }}>
-              正在读取并解析视频字幕...
+            <div className="sh-state-box">
+              <div className="sh-progress-wrap">
+                <div className="sh-progress-head">
+                  <span>正在获取视频字幕</span>
+                  <span style={{ color: 'var(--sh-accent)', fontVariantNumeric: 'tabular-nums' }}>
+                    {Math.round(progress.percent)}%
+                  </span>
+                </div>
+                <div className="sh-progress-bar">
+                  <div
+                    className="sh-progress-fill"
+                    style={{ width: `${Math.min(100, Math.max(5, progress.percent))}%` }}
+                  />
+                </div>
+                <div className="sh-progress-detail">{progress.detail}</div>
+              </div>
             </div>
           ) : !transcript || transcript.sentences.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--sh-muted)' }}>
-              当前视频没有检测到可用字幕。
-              <div style={{ marginTop: 8 }}>
-                <button className="sh-btn" onClick={() => window.postMessage({ type: 'SH_REQUEST_CAPTIONS' }, '*')}>
-                  🔄 重新尝试获取字幕
-                </button>
-              </div>
+            <div className="sh-state-box">
+              <div style={{ color: 'var(--sh-text)', fontWeight: 600 }}>当前视频没有检测到可用字幕。</div>
+              {failReason && <div style={{ fontSize: 12, maxWidth: 340, lineHeight: 1.5 }}>{failReason}</div>}
+              <button className="sh-btn sh-btn-active" onClick={onRetryCaptions}>
+                🔄 重新尝试获取字幕
+              </button>
             </div>
           ) : (
             <>

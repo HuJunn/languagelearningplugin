@@ -223,6 +223,55 @@ export const PANEL_CSS = `
   border-radius: 3px;
 }
 
+/* Caption Loading Progress & Empty State */
+.sh-state-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--sh-muted);
+  min-height: 180px;
+}
+
+.sh-progress-wrap {
+  width: 100%;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sh-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--sh-text);
+}
+
+.sh-progress-bar {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.sh-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--sh-accent), #60a5fa);
+  transition: width 0.28s ease-out;
+}
+
+.sh-progress-detail {
+  font-size: 11.5px;
+  color: var(--sh-muted);
+}
+
 .sh-sent-row {
   display: flex;
   align-items: flex-start;
