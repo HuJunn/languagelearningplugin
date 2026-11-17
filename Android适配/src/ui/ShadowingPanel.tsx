@@ -106,18 +106,12 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
 
   const currentVersion = useMemo(() => {
     try {
-      return chrome?.runtime?.getManifest?.()?.version || '0.1.2';
+      return chrome?.runtime?.getManifest?.()?.version || '0.1.5';
     } catch {
-      return '0.1.2';
+      return '0.1.5';
     }
   }, []);
-  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(() => {
-    const cached = loadJson<{ checkedAt: number; result: UpdateCheckResult } | null>('sh_update_check', null);
-    if (cached && cached.result?.currentVersion === currentVersion) {
-      return cached.result;
-    }
-    return null;
-  });
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
 
   const videoId = transcript?.videoId || 'default';
@@ -156,56 +150,42 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     return () => clearTimeout(t);
   }, [toastMsg]);
 
-  const handleCheckUpdate = useCallback(
-    async (silent = false) => {
-      if (checkingUpdate) return;
-      if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-        if (!silent) showToast(`当前版本 v${currentVersion}`);
-        return;
-      }
-      if (!silent) setCheckingUpdate(true);
-      try {
-        const res = (await chrome.runtime.sendMessage({ type: 'SH_CHECK_UPDATE' })) as
-          | ({ ok: true } & UpdateCheckResult)
-          | { ok: false; error?: string };
-        if (res?.ok) {
-          const info: UpdateCheckResult = {
-            currentVersion: res.currentVersion,
-            latestVersion: res.latestVersion,
-            hasUpdate: res.hasUpdate,
-            downloadUrl: res.downloadUrl,
-            repoUrl: res.repoUrl,
-            platform: res.platform,
-          };
-          setUpdateInfo(info);
-          saveJson('sh_update_check', { checkedAt: Date.now(), result: info });
-          if (!silent) {
-            showToast(
-              info.hasUpdate
-                ? `发现 GitHub 新版本 v${info.latestVersion}（当前 v${info.currentVersion}）`
-                : `当前已是最新版本 v${info.currentVersion}`,
-            );
-          }
-        } else if (!silent) {
-          showToast('检查更新失败，请确认可访问 GitHub');
-        }
-      } catch {
-        if (!silent) showToast('检查更新失败，请确认可访问 GitHub');
-      } finally {
-        if (!silent) setCheckingUpdate(false);
-      }
-    },
-    [checkingUpdate, currentVersion, showToast],
-  );
-
-  // 打开面板时静默检查 GitHub 新版本（每 6 小时最多自动请求一次）
-  useEffect(() => {
-    const cached = loadJson<{ checkedAt: number; result: UpdateCheckResult } | null>('sh_update_check', null);
-    const expired = !cached || Date.now() - cached.checkedAt > 6 * 3600 * 1000 || cached.result?.currentVersion !== currentVersion;
-    if (expired) {
-      handleCheckUpdate(true);
+  const handleCheckUpdate = useCallback(async () => {
+    if (checkingUpdate) return;
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
+      showToast(`当前版本 v${currentVersion}`);
+      return;
     }
-  }, [currentVersion]);
+    setCheckingUpdate(true);
+    try {
+      const res = (await chrome.runtime.sendMessage({ type: 'SH_CHECK_UPDATE' })) as
+        | ({ ok: true } & UpdateCheckResult)
+        | { ok: false; error?: string };
+      if (res?.ok) {
+        const info: UpdateCheckResult = {
+          currentVersion: res.currentVersion,
+          latestVersion: res.latestVersion,
+          hasUpdate: res.hasUpdate,
+          downloadUrl: res.downloadUrl,
+          repoUrl: res.repoUrl,
+          platform: res.platform,
+        };
+        setUpdateInfo(info);
+        if (info.hasUpdate) {
+          showToast(`发现新版本 v${info.latestVersion}，正在跳转下载链接...`);
+          window.open(info.downloadUrl, '_blank');
+        } else {
+          showToast(`当前已经是最新版本 v${info.currentVersion}`);
+        }
+      } else {
+        showToast('检查更新失败，请确认可访问 GitHub');
+      }
+    } catch {
+      showToast('检查更新失败，请确认可访问 GitHub');
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, [checkingUpdate, currentVersion, showToast]);
 
   useEffect(() => {
     if (!popover) return;
@@ -881,16 +861,10 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
             <button
               type="button"
               className={`sh-ver-badge ${updateInfo?.hasUpdate ? 'sh-has-update' : ''}`}
-              onClick={() => {
-                if (updateInfo?.hasUpdate) {
-                  setDrawer('help');
-                } else {
-                  handleCheckUpdate(false);
-                }
-              }}
+              onClick={() => handleCheckUpdate()}
               title={
                 updateInfo?.hasUpdate
-                  ? `发现 GitHub 新版本 v${updateInfo.latestVersion}！点击查看并下载`
+                  ? `发现 GitHub 新版本 v${updateInfo.latestVersion}！点击跳转下载`
                   : `当前版本 v${currentVersion} · 点击检查 GitHub 新版本`
               }
             >
@@ -1090,7 +1064,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                 )}
               </span>
               <div className="sh-spacer" />
-              <button className="sh-btn" onClick={() => handleCheckUpdate(false)} disabled={checkingUpdate}>
+              <button className="sh-btn" onClick={() => handleCheckUpdate()} disabled={checkingUpdate}>
                 {checkingUpdate ? '正在检查...' : '🔄 检查 GitHub 新版本'}
               </button>
               {updateInfo?.hasUpdate && (
@@ -1102,11 +1076,6 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
                 </button>
               )}
             </div>
-            {updateInfo?.hasUpdate && updateInfo.platform === 'android' && (
-              <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--sh-muted)' }}>
-                提示：安卓 Edge Canary 不支持后台静默更新，点上方下载新 `.crx` 后到「设置 → 开发者选项 → Extension install by .crx」覆盖安装即可（生词本会保留）。
-              </div>
-            )}
           </div>
         )}
 
