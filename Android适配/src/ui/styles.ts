@@ -44,6 +44,8 @@ export const PANEL_CSS = `
 .sh-panel.sh-mode-c {
   position: fixed;
   z-index: 2147483640;
+  max-width: calc(100vw - 12px);
+  max-height: calc(100vh - 16px);
 }
 
 .sh-panel.sh-mode-d {
@@ -65,9 +67,24 @@ export const PANEL_CSS = `
   flex-wrap: wrap;
 }
 
-.sh-header.sh-draggable {
-  cursor: move;
+.sh-drag-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: grab;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.sh-drag-title.sh-dragging {
+  background: rgba(56, 189, 248, 0.25);
+  box-shadow: 0 0 0 1px var(--sh-accent);
+  cursor: grabbing;
 }
 
 .sh-title {

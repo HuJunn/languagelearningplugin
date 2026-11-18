@@ -99,12 +99,20 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   const [showZh, setShowZh] = useState<boolean>(() => loadJson('sh_show_zh', false));
   const [opacity, setOpacity] = useState<number>(() => loadJson('sh_opacity', 0.92));
   const [pos, setPos] = useState<{ x: number; y: number }>(() =>
-    loadJson('sh_pos_c', { x: Math.max(20, window.innerWidth - 430), y: 72 }),
+    loadJson('sh_pos_c', { x: Math.max(12, window.innerWidth - 360), y: 72 }),
   );
-  const [sizeC, setSizeC] = useState<{ w: number; h: number }>(() =>
-    loadJson('sh_size_c', { w: 390, h: 480 }),
-  );
+  const [sizeC, setSizeC] = useState<{ w: number; h: number }>(() => {
+    const defaultSize =
+      window.innerWidth <= 680
+        ? {
+            w: Math.max(260, Math.min(340, window.innerWidth - 32)),
+            h: Math.max(280, Math.min(400, Math.round(window.innerHeight * 0.48))),
+          }
+        : { w: 390, h: 480 };
+    return loadJson('sh_size_c', defaultSize);
+  });
   const [heightD, setHeightD] = useState<number>(() => loadJson('sh_height_d', 320));
+  const [isDraggingTitle, setIsDraggingTitle] = useState<boolean>(false);
 
   const [activeIdx, setActiveIdx] = useState<number>(-1);
   const [popover, setPopover] = useState<PopoverState | null>(null);
@@ -162,7 +170,19 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   useEffect(() => saveJson('sh_size_c', sizeC), [sizeC]);
   useEffect(() => saveJson('sh_height_d', heightD), [heightD]);
 
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const dragHandleRef = useRef<HTMLSpanElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const posRef = useRef(pos);
+  posRef.current = pos;
+  const sizeCRef = useRef(sizeC);
+  sizeCRef.current = sizeC;
+  const effectiveModeRef = useRef(effectiveMode);
+  effectiveModeRef.current = effectiveMode;
+  const isFullscreenRef = useRef(isFullscreen);
+  isFullscreenRef.current = isFullscreen;
+  const onModeChangeRef = useRef(onModeChange);
+  onModeChangeRef.current = onModeChange;
   const stopTargetRef = useRef<{ idx: number; time: number } | null>(null);
   const autoPausedIdxRef = useRef<number | null>(null);
   const lastCompletedIdxRef = useRef<number | null>(null);
@@ -883,52 +903,164 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     return () => clearInterval(timer);
   }, [displaySentences, getVideoElement, playSentence, showToast]);
 
-  // Mode C 拖拽移动（同时支持鼠标与平板/手机触屏拖拽）
-  const startHeaderDrag = (clientX: number, clientY: number) => {
-    const startX = clientX - pos.x;
-    const startY = clientY - pos.y;
+  // 仅允许长按「🗣 口语跟读」UI 拖动面板（原生 non-passive 触摸与鼠标长按适配，防止触发页面滚动与长按菜单）
+  useEffect(() => {
+    const handleEl = dragHandleRef.current;
+    if (!handleEl) return;
 
-    const moveAt = (cx: number, cy: number) => {
-      const nx = Math.max(6, Math.min(window.innerWidth - sizeC.w - 6, cx - startX));
-      const ny = Math.max(6, Math.min(window.innerHeight - 60, cy - startY));
+    const LONG_PRESS_MS = 260;
+    let pressTimer: number | null = null;
+    let dragActive = false;
+    let pointerMode: 'touch' | 'mouse' | null = null;
+    let startClientX = 0;
+    let startClientY = 0;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    const clearTimer = () => {
+      if (pressTimer !== null) {
+        window.clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
+
+    const clampAndSetPos = (cx: number, cy: number) => {
+      const actualW = panelRef.current?.offsetWidth || Math.min(sizeCRef.current.w, window.innerWidth - 12);
+      const maxX = Math.max(6, window.innerWidth - actualW - 6);
+      const maxY = Math.max(6, window.innerHeight - 64);
+      const nx = Math.max(6, Math.min(maxX, cx - offsetX));
+      const ny = Math.max(6, Math.min(maxY, cy - offsetY));
       setPos({ x: nx, y: ny });
     };
-    const onMouseMove = (ev: MouseEvent) => moveAt(ev.clientX, ev.clientY);
-    const onTouchMove = (ev: TouchEvent) => {
-      if (ev.cancelable) ev.preventDefault();
-      ev.stopPropagation();
-      if (ev.touches[0]) moveAt(ev.touches[0].clientX, ev.touches[0].clientY);
+
+    const activateDrag = (cx: number, cy: number) => {
+      dragActive = true;
+      const rect = panelRef.current?.getBoundingClientRect();
+      const actualW = rect?.width || Math.min(sizeCRef.current.w, Math.max(240, window.innerWidth - 12));
+      const basePos = rect
+        ? {
+            x: Math.max(6, Math.min(Math.max(6, window.innerWidth - actualW - 6), rect.left)),
+            y: Math.max(6, Math.min(Math.max(6, window.innerHeight - 64), rect.top)),
+          }
+        : posRef.current;
+      if (effectiveModeRef.current === 'D' && !isFullscreenRef.current) {
+        onModeChangeRef.current('C');
+      }
+      setPos(basePos);
+      offsetX = cx - basePos.x;
+      offsetY = cy - basePos.y;
+      setIsDraggingTitle(true);
+      try {
+        navigator.vibrate?.(16);
+      } catch {
+        // ignore
+      }
     };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onUp);
-      window.removeEventListener('touchmove', onTouchMove);
-      window.removeEventListener('touchend', onUp);
-      window.removeEventListener('touchcancel', onUp);
+
+    const resetDrag = () => {
+      clearTimer();
+      if (dragActive) {
+        dragActive = false;
+        setIsDraggingTitle(false);
+      }
+      pointerMode = null;
     };
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onUp);
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) {
+        resetDrag();
+        return;
+      }
+      const t = e.touches[0];
+      clearTimer();
+      pointerMode = 'touch';
+      startClientX = t.clientX;
+      startClientY = t.clientY;
+      e.stopPropagation();
+      pressTimer = window.setTimeout(() => {
+        pressTimer = null;
+        if (pointerMode === 'touch') {
+          activateDrag(startClientX, startClientY);
+        }
+      }, LONG_PRESS_MS);
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (pointerMode !== 'touch' || !e.touches[0]) return;
+      const t = e.touches[0];
+      if (!dragActive) {
+        if (Math.hypot(t.clientX - startClientX, t.clientY - startClientY) > 18) {
+          clearTimer();
+        }
+        return;
+      }
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+      clampAndSetPos(t.clientX, t.clientY);
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (pointerMode !== 'touch') return;
+      if (dragActive && e.cancelable) e.preventDefault();
+      resetDrag();
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      clearTimer();
+      pointerMode = 'mouse';
+      startClientX = e.clientX;
+      startClientY = e.clientY;
+      e.preventDefault();
+      pressTimer = window.setTimeout(() => {
+        pressTimer = null;
+        if (pointerMode === 'mouse') {
+          activateDrag(startClientX, startClientY);
+        }
+      }, LONG_PRESS_MS);
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (pointerMode !== 'mouse') return;
+      if (!dragActive) {
+        if (Math.hypot(e.clientX - startClientX, e.clientY - startClientY) > 18) {
+          clearTimer();
+        }
+        return;
+      }
+      clampAndSetPos(e.clientX, e.clientY);
+    };
+
+    const onMouseUp = () => {
+      if (pointerMode !== 'mouse') return;
+      resetDrag();
+    };
+
+    const onContextMenu = (e: Event) => {
+      e.preventDefault();
+    };
+
+    handleEl.addEventListener('touchstart', onTouchStart, { passive: false });
+    handleEl.addEventListener('contextmenu', onContextMenu);
+    handleEl.addEventListener('mousedown', onMouseDown);
     window.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('touchend', onUp);
-    window.addEventListener('touchcancel', onUp);
-  };
+    window.addEventListener('touchend', onTouchEnd, { passive: false });
+    window.addEventListener('touchcancel', onTouchEnd, { passive: false });
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
 
-  const handleHeaderMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (effectiveMode !== 'C') return;
-    const target = e.target as HTMLElement;
-    if (target.closest('button, label, input, select')) return;
-    e.preventDefault();
-    startHeaderDrag(e.clientX, e.clientY);
-  };
-
-  const handleHeaderTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (effectiveMode !== 'C') return;
-    const target = e.target as HTMLElement;
-    if (target.closest('button, label, input, select') || !e.touches[0]) return;
-    if (e.cancelable) e.preventDefault();
-    e.stopPropagation();
-    startHeaderDrag(e.touches[0].clientX, e.touches[0].clientY);
-  };
+    return () => {
+      clearTimer();
+      handleEl.removeEventListener('touchstart', onTouchStart);
+      handleEl.removeEventListener('contextmenu', onContextMenu);
+      handleEl.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
 
   // Mode C & D 拖拽调整窗口大小（同时支持鼠标与触屏）
   const beginResizeAt = (dir: 'r' | 'b' | 'br', startX: number, startY: number) => {
@@ -1137,13 +1269,18 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     return '人工字幕 · 智能插值';
   }, [transcript, loading, progress.percent]);
 
+  const clampedWidthC = Math.min(sizeC.w, Math.max(240, window.innerWidth - 12));
+  const clampedHeightC = Math.min(sizeC.h, Math.max(220, window.innerHeight - 16));
+  const clampedPosX = Math.max(6, Math.min(Math.max(6, window.innerWidth - clampedWidthC - 6), pos.x));
+  const clampedPosY = Math.max(6, Math.min(Math.max(6, window.innerHeight - 64), pos.y));
+
   const panelStyle: React.CSSProperties =
     effectiveMode === 'C'
       ? {
-          left: `${pos.x}px`,
-          top: `${pos.y}px`,
-          width: `${sizeC.w}px`,
-          height: `${sizeC.h}px`,
+          left: `${clampedPosX}px`,
+          top: `${clampedPosY}px`,
+          width: `${clampedWidthC}px`,
+          height: `${clampedHeightC}px`,
           ['--sh-bg-alpha' as any]: opacity,
         }
       : {
@@ -1154,6 +1291,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   return (
     <div className="sh-root">
       <div
+        ref={panelRef}
         className={`sh-panel ${effectiveMode === 'C' ? 'sh-mode-c' : 'sh-mode-d'}`}
         style={{ ...panelStyle, ...(visible ? {} : { display: 'none' }) }}
         onTouchStart={(e) => e.stopPropagation()}
@@ -1162,13 +1300,15 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
         onWheel={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div
-          className={`sh-header ${effectiveMode === 'C' ? 'sh-draggable' : ''}`}
-          onMouseDown={handleHeaderMouseDown}
-          onTouchStart={handleHeaderTouchStart}
-        >
+        <div className="sh-header">
           <div className="sh-title">
-            <span>🗣 口语跟读</span>
+            <span
+              ref={dragHandleRef}
+              className={`sh-drag-title ${isDraggingTitle ? 'sh-dragging' : ''}`}
+              title="长按「口语跟读」后可拖动悬浮面板位置"
+            >
+              🗣 口语跟读
+            </span>
             <button
               type="button"
               className={`sh-ver-badge ${updateInfo?.hasUpdate ? 'sh-has-update' : ''}`}
