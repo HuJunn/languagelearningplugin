@@ -101,14 +101,17 @@ const headerLen = Buffer.alloc(4);
 headerLen.writeUInt32LE(crxHeader.length, 0);
 
 const crxBuf = Buffer.concat([magic, version, headerLen, crxHeader, zipBuf]);
+const versionedCrxName = `yt-shadowing-android-v${pkg.version}.crx`;
 const crxOut = path.join(OUT_DIR, 'yt-shadowing.crx');
+const versionedCrxOut = path.join(OUT_DIR, versionedCrxName);
 const zipCopy = path.join(OUT_DIR, 'yt-shadowing.zip');
 fs.writeFileSync(crxOut, crxBuf);
+fs.writeFileSync(versionedCrxOut, crxBuf);
 if (srcZip !== zipCopy) fs.copyFileSync(srcZip, zipCopy);
 
 // Generate updates.xml for GitHub auto-update
 const codebaseUrl =
-  'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/android/yt-shadowing-android.crx';
+  `https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/android/${versionedCrxName}`;
 const updatesXml = [
   "<?xml version='1.0' encoding='UTF-8'?>",
   "<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>",

@@ -17,6 +17,11 @@ export const ANDROID_CRX_DOWNLOAD_URL =
 export const DESKTOP_ZIP_DOWNLOAD_URL =
   'https://github.com/HuJunn/languagelearningplugin/raw/main/releases/desktop/yt-shadowing-desktop.zip';
 
+export function buildAndroidCrxDownloadUrl(version: string): string {
+  const v = version.replace(/^v/i, '').trim();
+  return `https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/android/yt-shadowing-android-v${v}.crx`;
+}
+
 /** 比较语义化版本号：a > b 返回 1，a < b 返回 -1，相等返回 0 */
 export function compareSemver(a: string, b: string): number {
   const pa = a.replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
@@ -32,9 +37,12 @@ export function compareSemver(a: string, b: string): number {
 }
 
 export function parseAndroidUpdatesXml(xml: string): { version: string; codebase?: string } | null {
-  const verMatch = /version\s*=\s*['"]([^'"]+)['"]/i.exec(xml);
+  // 必须跳过顶部 `<?xml version='1.0' ...?>` 声明，仅提取 `<updatecheck ...>` 标签上的版本号与下载地址
+  const updateTagMatch = /<updatecheck\b([^>]*)/i.exec(xml);
+  const scope = updateTagMatch ? updateTagMatch[1] : xml.replace(/<\?xml[\s\S]*?\?>/gi, '');
+  const verMatch = /\bversion\s*=\s*['"]([^'"]+)['"]/i.exec(scope);
   if (!verMatch) return null;
-  const codeMatch = /codebase\s*=\s*['"]([^'"]+)['"]/i.exec(xml);
+  const codeMatch = /\bcodebase\s*=\s*['"]([^'"]+)['"]/i.exec(scope);
   return { version: verMatch[1].trim(), codebase: codeMatch?.[1]?.trim() };
 }
 
@@ -53,7 +61,7 @@ export async function checkGitHubUpdate(
       currentVersion,
       latestVersion: parsed.version,
       hasUpdate: compareSemver(parsed.version, currentVersion) > 0,
-      downloadUrl: ANDROID_CRX_DOWNLOAD_URL,
+      downloadUrl: parsed.codebase || buildAndroidCrxDownloadUrl(parsed.version),
       repoUrl: GITHUB_REPO_URL,
       platform,
     };

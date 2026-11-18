@@ -145,8 +145,11 @@ describe('Version comparison & GitHub updates.xml parser', () => {
     expect(compareSemver('0.1.1', '0.2.0')).toBe(-1);
 
     const parsed = parseAndroidUpdatesXml(
-      "<gupdate><app appid='abc'><updatecheck codebase='https://example.com/a.crx' version='0.1.2' /></app></gupdate>",
+      "<?xml version='1.0' encoding='UTF-8'?>\n<gupdate><app appid='abc'><updatecheck codebase='https://example.com/yt-shadowing-android-v0.2.3.crx' version='0.2.3' /></app></gupdate>",
     );
-    expect(parsed).toEqual({ version: '0.1.2', codebase: 'https://example.com/a.crx' });
+    expect(parsed).toEqual({
+      version: '0.2.3',
+      codebase: 'https://example.com/yt-shadowing-android-v0.2.3.crx',
+    });
   });
 });
