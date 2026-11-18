@@ -113,6 +113,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   });
   const [heightD, setHeightD] = useState<number>(() => loadJson('sh_height_d', 320));
   const [isDraggingTitle, setIsDraggingTitle] = useState<boolean>(false);
+  const [dragFloatOverride, setDragFloatOverride] = useState<boolean>(false);
 
   const [activeIdx, setActiveIdx] = useState<number>(-1);
   const [popover, setPopover] = useState<PopoverState | null>(null);
@@ -911,9 +912,13 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     const LONG_PRESS_MS = 260;
     let pressTimer: number | null = null;
     let dragActive = false;
+    let deferredSwitchToC = false;
     let pointerMode: 'touch' | 'mouse' | null = null;
+    let lastTouchAt = 0;
     let startClientX = 0;
     let startClientY = 0;
+    let curClientX = 0;
+    let curClientY = 0;
     let offsetX = 0;
     let offsetY = 0;
 
@@ -943,8 +948,10 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
             y: Math.max(6, Math.min(Math.max(6, window.innerHeight - 64), rect.top)),
           }
         : posRef.current;
+      // 若从剧场 D 发起拖拽：触摸期间先用内联 fixed 悬浮定位，避免立刻 appendChild 重排节点打断 Android touchmove 事件；松手后再提交切换到 C
       if (effectiveModeRef.current === 'D' && !isFullscreenRef.current) {
-        onModeChangeRef.current('C');
+        deferredSwitchToC = true;
+        setDragFloatOverride(true);
       }
       setPos(basePos);
       offsetX = cx - basePos.x;
@@ -962,11 +969,17 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       if (dragActive) {
         dragActive = false;
         setIsDraggingTitle(false);
+        if (deferredSwitchToC) {
+          deferredSwitchToC = false;
+          setDragFloatOverride(false);
+          onModeChangeRef.current('C');
+        }
       }
       pointerMode = null;
     };
 
     const onTouchStart = (e: TouchEvent) => {
+      lastTouchAt = Date.now();
       if (e.touches.length !== 1) {
         resetDrag();
         return;
@@ -976,18 +989,23 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       pointerMode = 'touch';
       startClientX = t.clientX;
       startClientY = t.clientY;
+      curClientX = t.clientX;
+      curClientY = t.clientY;
       e.stopPropagation();
       pressTimer = window.setTimeout(() => {
         pressTimer = null;
         if (pointerMode === 'touch') {
-          activateDrag(startClientX, startClientY);
+          activateDrag(curClientX, curClientY);
         }
       }, LONG_PRESS_MS);
     };
 
     const onTouchMove = (e: TouchEvent) => {
       if (pointerMode !== 'touch' || !e.touches[0]) return;
+      lastTouchAt = Date.now();
       const t = e.touches[0];
+      curClientX = t.clientX;
+      curClientY = t.clientY;
       if (!dragActive) {
         if (Math.hypot(t.clientX - startClientX, t.clientY - startClientY) > 18) {
           clearTimer();
@@ -1001,27 +1019,32 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
 
     const onTouchEnd = (e: TouchEvent) => {
       if (pointerMode !== 'touch') return;
+      lastTouchAt = Date.now();
       if (dragActive && e.cancelable) e.preventDefault();
       resetDrag();
     };
 
     const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || Date.now() - lastTouchAt < 700) return;
       clearTimer();
       pointerMode = 'mouse';
       startClientX = e.clientX;
       startClientY = e.clientY;
+      curClientX = e.clientX;
+      curClientY = e.clientY;
       e.preventDefault();
       pressTimer = window.setTimeout(() => {
         pressTimer = null;
         if (pointerMode === 'mouse') {
-          activateDrag(startClientX, startClientY);
+          activateDrag(curClientX, curClientY);
         }
       }, LONG_PRESS_MS);
     };
 
     const onMouseMove = (e: MouseEvent) => {
       if (pointerMode !== 'mouse') return;
+      curClientX = e.clientX;
+      curClientY = e.clientY;
       if (!dragActive) {
         if (Math.hypot(e.clientX - startClientX, e.clientY - startClientY) > 18) {
           clearTimer();
@@ -1040,25 +1063,32 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
       e.preventDefault();
     };
 
+    // 直接在 handleEl 与 window 捕获阶段监听，绕过 .sh-panel 上的 stopPropagation() 阻止冒泡
     handleEl.addEventListener('touchstart', onTouchStart, { passive: false });
+    handleEl.addEventListener('touchmove', onTouchMove, { passive: false });
+    handleEl.addEventListener('touchend', onTouchEnd, { passive: false });
+    handleEl.addEventListener('touchcancel', onTouchEnd, { passive: false });
     handleEl.addEventListener('contextmenu', onContextMenu);
     handleEl.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('touchend', onTouchEnd, { passive: false });
-    window.addEventListener('touchcancel', onTouchEnd, { passive: false });
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+    window.addEventListener('touchend', onTouchEnd, { capture: true, passive: false });
+    window.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: false });
+    window.addEventListener('mousemove', onMouseMove, { capture: true });
+    window.addEventListener('mouseup', onMouseUp, { capture: true });
 
     return () => {
       clearTimer();
       handleEl.removeEventListener('touchstart', onTouchStart);
+      handleEl.removeEventListener('touchmove', onTouchMove);
+      handleEl.removeEventListener('touchend', onTouchEnd);
+      handleEl.removeEventListener('touchcancel', onTouchEnd);
       handleEl.removeEventListener('contextmenu', onContextMenu);
       handleEl.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('touchmove', onTouchMove);
-      window.removeEventListener('touchend', onTouchEnd);
-      window.removeEventListener('touchcancel', onTouchEnd);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('touchmove', onTouchMove, true);
+      window.removeEventListener('touchend', onTouchEnd, true);
+      window.removeEventListener('touchcancel', onTouchEnd, true);
+      window.removeEventListener('mousemove', onMouseMove, true);
+      window.removeEventListener('mouseup', onMouseUp, true);
     };
   }, []);
 
@@ -1274,8 +1304,9 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   const clampedPosX = Math.max(6, Math.min(Math.max(6, window.innerWidth - clampedWidthC - 6), pos.x));
   const clampedPosY = Math.max(6, Math.min(Math.max(6, window.innerHeight - 64), pos.y));
 
+  const renderAsFloatingC = effectiveMode === 'C' || dragFloatOverride;
   const panelStyle: React.CSSProperties =
-    effectiveMode === 'C'
+    renderAsFloatingC
       ? {
           left: `${clampedPosX}px`,
           top: `${clampedPosY}px`,
@@ -1292,7 +1323,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     <div className="sh-root">
       <div
         ref={panelRef}
-        className={`sh-panel ${effectiveMode === 'C' ? 'sh-mode-c' : 'sh-mode-d'}`}
+        className={`sh-panel ${renderAsFloatingC ? 'sh-mode-c' : 'sh-mode-d'}`}
         style={{ ...panelStyle, ...(visible ? {} : { display: 'none' }) }}
         onTouchStart={(e) => e.stopPropagation()}
         onTouchMove={(e) => e.stopPropagation()}
