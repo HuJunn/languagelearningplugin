@@ -13,7 +13,7 @@ export const ANDROID_UPDATES_XML_URL =
 export const DESKTOP_PACKAGE_JSON_URL =
   'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/%E5%8F%A3%E8%AF%AD%E6%8F%92%E4%BB%B6/package.json';
 export const ANDROID_CRX_DOWNLOAD_URL =
-  'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/android/yt-shadowing-android-v0.2.4.crx';
+  'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/android/yt-shadowing-android-v0.2.5.crx';
 export const DESKTOP_ZIP_DOWNLOAD_URL =
   'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/desktop/yt-shadowing-desktop-v0.1.9.zip';
 

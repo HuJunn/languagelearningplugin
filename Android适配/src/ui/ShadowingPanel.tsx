@@ -73,6 +73,164 @@ function saveJson(key: string, val: unknown) {
 
 const SPEED_STEPS = [0.5, 0.75, 1, 1.25, 1.5] as const;
 
+interface LongPressGestureOpts {
+  el: HTMLElement;
+  holdMs?: number;
+  onActivate: (cx: number, cy: number) => void;
+  onMove: (cx: number, cy: number) => void;
+  onEnd: () => void;
+}
+
+/**
+ * 原生 non-passive + window 捕获阶段长按拖拽手势适配器：
+ * 绕过外层容器 stopPropagation()，并防止 Android 浏览器触发页面滚动或长按文本菜单。
+ */
+function attachLongPressGesture({ el, holdMs = 260, onActivate, onMove, onEnd }: LongPressGestureOpts): () => void {
+  let pressTimer: number | null = null;
+  let active = false;
+  let pointerMode: 'touch' | 'mouse' | null = null;
+  let lastTouchAt = 0;
+  let startX = 0;
+  let startY = 0;
+  let curX = 0;
+  let curY = 0;
+
+  const clearTimer = () => {
+    if (pressTimer !== null) {
+      window.clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+
+  const reset = () => {
+    clearTimer();
+    if (active) {
+      active = false;
+      onEnd();
+    }
+    pointerMode = null;
+  };
+
+  const onTouchStart = (e: TouchEvent) => {
+    lastTouchAt = Date.now();
+    if (e.touches.length !== 1) {
+      reset();
+      return;
+    }
+    const t = e.touches[0];
+    clearTimer();
+    pointerMode = 'touch';
+    startX = t.clientX;
+    startY = t.clientY;
+    curX = t.clientX;
+    curY = t.clientY;
+    e.stopPropagation();
+    pressTimer = window.setTimeout(() => {
+      pressTimer = null;
+      if (pointerMode === 'touch') {
+        active = true;
+        onActivate(curX, curY);
+        try {
+          navigator.vibrate?.(16);
+        } catch {
+          // ignore
+        }
+      }
+    }, holdMs);
+  };
+
+  const onTouchMove = (e: TouchEvent) => {
+    if (pointerMode !== 'touch' || !e.touches[0]) return;
+    lastTouchAt = Date.now();
+    const t = e.touches[0];
+    curX = t.clientX;
+    curY = t.clientY;
+    if (!active) {
+      if (Math.hypot(t.clientX - startX, t.clientY - startY) > 18) {
+        clearTimer();
+      }
+      return;
+    }
+    if (e.cancelable) e.preventDefault();
+    e.stopPropagation();
+    onMove(t.clientX, t.clientY);
+  };
+
+  const onTouchEnd = (e: TouchEvent) => {
+    if (pointerMode !== 'touch') return;
+    lastTouchAt = Date.now();
+    if (active && e.cancelable) e.preventDefault();
+    reset();
+  };
+
+  const onMouseDown = (e: MouseEvent) => {
+    if (e.button !== 0 || Date.now() - lastTouchAt < 700) return;
+    clearTimer();
+    pointerMode = 'mouse';
+    startX = e.clientX;
+    startY = e.clientY;
+    curX = e.clientX;
+    curY = e.clientY;
+    e.preventDefault();
+    pressTimer = window.setTimeout(() => {
+      pressTimer = null;
+      if (pointerMode === 'mouse') {
+        active = true;
+        onActivate(curX, curY);
+      }
+    }, holdMs);
+  };
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (pointerMode !== 'mouse') return;
+    curX = e.clientX;
+    curY = e.clientY;
+    if (!active) {
+      if (Math.hypot(e.clientX - startX, e.clientY - startY) > 18) {
+        clearTimer();
+      }
+      return;
+    }
+    onMove(e.clientX, e.clientY);
+  };
+
+  const onMouseUp = () => {
+    if (pointerMode !== 'mouse') return;
+    reset();
+  };
+
+  const onContextMenu = (e: Event) => {
+    e.preventDefault();
+  };
+
+  el.addEventListener('touchstart', onTouchStart, { passive: false });
+  el.addEventListener('touchmove', onTouchMove, { passive: false });
+  el.addEventListener('touchend', onTouchEnd, { passive: false });
+  el.addEventListener('touchcancel', onTouchEnd, { passive: false });
+  el.addEventListener('contextmenu', onContextMenu);
+  el.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+  window.addEventListener('touchend', onTouchEnd, { capture: true, passive: false });
+  window.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: false });
+  window.addEventListener('mousemove', onMouseMove, { capture: true });
+  window.addEventListener('mouseup', onMouseUp, { capture: true });
+
+  return () => {
+    clearTimer();
+    el.removeEventListener('touchstart', onTouchStart);
+    el.removeEventListener('touchmove', onTouchMove);
+    el.removeEventListener('touchend', onTouchEnd);
+    el.removeEventListener('touchcancel', onTouchEnd);
+    el.removeEventListener('contextmenu', onContextMenu);
+    el.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('touchmove', onTouchMove, true);
+    window.removeEventListener('touchend', onTouchEnd, true);
+    window.removeEventListener('touchcancel', onTouchEnd, true);
+    window.removeEventListener('mousemove', onMouseMove, true);
+    window.removeEventListener('mouseup', onMouseUp, true);
+  };
+}
+
 export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   transcript,
   videoTitle,
@@ -113,6 +271,7 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
   });
   const [heightD, setHeightD] = useState<number>(() => loadJson('sh_height_d', 320));
   const [isDraggingTitle, setIsDraggingTitle] = useState<boolean>(false);
+  const [isResizing, setIsResizing] = useState<boolean>(false);
   const [dragFloatOverride, setDragFloatOverride] = useState<boolean>(false);
 
   const [activeIdx, setActiveIdx] = useState<number>(-1);
@@ -173,11 +332,16 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragHandleRef = useRef<HTMLSpanElement | null>(null);
+  const resizeRRef = useRef<HTMLDivElement | null>(null);
+  const resizeBRef = useRef<HTMLDivElement | null>(null);
+  const resizeBrRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const posRef = useRef(pos);
   posRef.current = pos;
   const sizeCRef = useRef(sizeC);
   sizeCRef.current = sizeC;
+  const heightDRef = useRef(heightD);
+  heightDRef.current = heightD;
   const effectiveModeRef = useRef(effectiveMode);
   effectiveModeRef.current = effectiveMode;
   const isFullscreenRef = useRef(isFullscreen);
@@ -904,242 +1068,111 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
     return () => clearInterval(timer);
   }, [displaySentences, getVideoElement, playSentence, showToast]);
 
-  // 仅允许长按「🗣 口语跟读」UI 拖动面板（原生 non-passive 触摸与鼠标长按适配，防止触发页面滚动与长按菜单）
+  // 仅允许长按「🗣 口语跟读」UI 拖动面板（复用原生 non-passive + capture 长按手势）
   useEffect(() => {
     const handleEl = dragHandleRef.current;
     if (!handleEl) return;
 
-    const LONG_PRESS_MS = 260;
-    let pressTimer: number | null = null;
-    let dragActive = false;
     let deferredSwitchToC = false;
-    let pointerMode: 'touch' | 'mouse' | null = null;
-    let lastTouchAt = 0;
-    let startClientX = 0;
-    let startClientY = 0;
-    let curClientX = 0;
-    let curClientY = 0;
     let offsetX = 0;
     let offsetY = 0;
 
-    const clearTimer = () => {
-      if (pressTimer !== null) {
-        window.clearTimeout(pressTimer);
-        pressTimer = null;
-      }
-    };
-
-    const clampAndSetPos = (cx: number, cy: number) => {
-      const actualW = panelRef.current?.offsetWidth || Math.min(sizeCRef.current.w, window.innerWidth - 12);
-      const maxX = Math.max(6, window.innerWidth - actualW - 6);
-      const maxY = Math.max(6, window.innerHeight - 64);
-      const nx = Math.max(6, Math.min(maxX, cx - offsetX));
-      const ny = Math.max(6, Math.min(maxY, cy - offsetY));
-      setPos({ x: nx, y: ny });
-    };
-
-    const activateDrag = (cx: number, cy: number) => {
-      dragActive = true;
-      const rect = panelRef.current?.getBoundingClientRect();
-      const actualW = rect?.width || Math.min(sizeCRef.current.w, Math.max(240, window.innerWidth - 12));
-      const basePos = rect
-        ? {
-            x: Math.max(6, Math.min(Math.max(6, window.innerWidth - actualW - 6), rect.left)),
-            y: Math.max(6, Math.min(Math.max(6, window.innerHeight - 64), rect.top)),
-          }
-        : posRef.current;
-      // 若从剧场 D 发起拖拽：触摸期间先用内联 fixed 悬浮定位，避免立刻 appendChild 重排节点打断 Android touchmove 事件；松手后再提交切换到 C
-      if (effectiveModeRef.current === 'D' && !isFullscreenRef.current) {
-        deferredSwitchToC = true;
-        setDragFloatOverride(true);
-      }
-      setPos(basePos);
-      offsetX = cx - basePos.x;
-      offsetY = cy - basePos.y;
-      setIsDraggingTitle(true);
-      try {
-        navigator.vibrate?.(16);
-      } catch {
-        // ignore
-      }
-    };
-
-    const resetDrag = () => {
-      clearTimer();
-      if (dragActive) {
-        dragActive = false;
+    return attachLongPressGesture({
+      el: handleEl,
+      onActivate: (cx, cy) => {
+        const rect = panelRef.current?.getBoundingClientRect();
+        const actualW = rect?.width || Math.min(sizeCRef.current.w, Math.max(240, window.innerWidth - 12));
+        const basePos = rect
+          ? {
+              x: Math.max(6, Math.min(Math.max(6, window.innerWidth - actualW - 6), rect.left)),
+              y: Math.max(6, Math.min(Math.max(6, window.innerHeight - 64), rect.top)),
+            }
+          : posRef.current;
+        if (effectiveModeRef.current === 'D' && !isFullscreenRef.current) {
+          deferredSwitchToC = true;
+          setDragFloatOverride(true);
+        }
+        setPos(basePos);
+        offsetX = cx - basePos.x;
+        offsetY = cy - basePos.y;
+        setIsDraggingTitle(true);
+      },
+      onMove: (cx, cy) => {
+        const actualW = panelRef.current?.offsetWidth || Math.min(sizeCRef.current.w, window.innerWidth - 12);
+        const maxX = Math.max(6, window.innerWidth - actualW - 6);
+        const maxY = Math.max(6, window.innerHeight - 64);
+        setPos({
+          x: Math.max(6, Math.min(maxX, cx - offsetX)),
+          y: Math.max(6, Math.min(maxY, cy - offsetY)),
+        });
+      },
+      onEnd: () => {
         setIsDraggingTitle(false);
         if (deferredSwitchToC) {
           deferredSwitchToC = false;
           setDragFloatOverride(false);
           onModeChangeRef.current('C');
         }
-      }
-      pointerMode = null;
-    };
-
-    const onTouchStart = (e: TouchEvent) => {
-      lastTouchAt = Date.now();
-      if (e.touches.length !== 1) {
-        resetDrag();
-        return;
-      }
-      const t = e.touches[0];
-      clearTimer();
-      pointerMode = 'touch';
-      startClientX = t.clientX;
-      startClientY = t.clientY;
-      curClientX = t.clientX;
-      curClientY = t.clientY;
-      e.stopPropagation();
-      pressTimer = window.setTimeout(() => {
-        pressTimer = null;
-        if (pointerMode === 'touch') {
-          activateDrag(curClientX, curClientY);
-        }
-      }, LONG_PRESS_MS);
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (pointerMode !== 'touch' || !e.touches[0]) return;
-      lastTouchAt = Date.now();
-      const t = e.touches[0];
-      curClientX = t.clientX;
-      curClientY = t.clientY;
-      if (!dragActive) {
-        if (Math.hypot(t.clientX - startClientX, t.clientY - startClientY) > 18) {
-          clearTimer();
-        }
-        return;
-      }
-      if (e.cancelable) e.preventDefault();
-      e.stopPropagation();
-      clampAndSetPos(t.clientX, t.clientY);
-    };
-
-    const onTouchEnd = (e: TouchEvent) => {
-      if (pointerMode !== 'touch') return;
-      lastTouchAt = Date.now();
-      if (dragActive && e.cancelable) e.preventDefault();
-      resetDrag();
-    };
-
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0 || Date.now() - lastTouchAt < 700) return;
-      clearTimer();
-      pointerMode = 'mouse';
-      startClientX = e.clientX;
-      startClientY = e.clientY;
-      curClientX = e.clientX;
-      curClientY = e.clientY;
-      e.preventDefault();
-      pressTimer = window.setTimeout(() => {
-        pressTimer = null;
-        if (pointerMode === 'mouse') {
-          activateDrag(curClientX, curClientY);
-        }
-      }, LONG_PRESS_MS);
-    };
-
-    const onMouseMove = (e: MouseEvent) => {
-      if (pointerMode !== 'mouse') return;
-      curClientX = e.clientX;
-      curClientY = e.clientY;
-      if (!dragActive) {
-        if (Math.hypot(e.clientX - startClientX, e.clientY - startClientY) > 18) {
-          clearTimer();
-        }
-        return;
-      }
-      clampAndSetPos(e.clientX, e.clientY);
-    };
-
-    const onMouseUp = () => {
-      if (pointerMode !== 'mouse') return;
-      resetDrag();
-    };
-
-    const onContextMenu = (e: Event) => {
-      e.preventDefault();
-    };
-
-    // 直接在 handleEl 与 window 捕获阶段监听，绕过 .sh-panel 上的 stopPropagation() 阻止冒泡
-    handleEl.addEventListener('touchstart', onTouchStart, { passive: false });
-    handleEl.addEventListener('touchmove', onTouchMove, { passive: false });
-    handleEl.addEventListener('touchend', onTouchEnd, { passive: false });
-    handleEl.addEventListener('touchcancel', onTouchEnd, { passive: false });
-    handleEl.addEventListener('contextmenu', onContextMenu);
-    handleEl.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
-    window.addEventListener('touchend', onTouchEnd, { capture: true, passive: false });
-    window.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: false });
-    window.addEventListener('mousemove', onMouseMove, { capture: true });
-    window.addEventListener('mouseup', onMouseUp, { capture: true });
-
-    return () => {
-      clearTimer();
-      handleEl.removeEventListener('touchstart', onTouchStart);
-      handleEl.removeEventListener('touchmove', onTouchMove);
-      handleEl.removeEventListener('touchend', onTouchEnd);
-      handleEl.removeEventListener('touchcancel', onTouchEnd);
-      handleEl.removeEventListener('contextmenu', onContextMenu);
-      handleEl.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('touchmove', onTouchMove, true);
-      window.removeEventListener('touchend', onTouchEnd, true);
-      window.removeEventListener('touchcancel', onTouchEnd, true);
-      window.removeEventListener('mousemove', onMouseMove, true);
-      window.removeEventListener('mouseup', onMouseUp, true);
-    };
+      },
+    });
   }, []);
 
-  // Mode C & D 拖拽调整窗口大小（同时支持鼠标与触屏）
-  const beginResizeAt = (dir: 'r' | 'b' | 'br', startX: number, startY: number) => {
-    const initW = sizeC.w;
-    const initH = effectiveMode === 'C' ? sizeC.h : heightD;
+  // Mode C & D 长按调整窗口大小（与「🗣 口语跟读」保持完全一致的长按拖拽适配）
+  useEffect(() => {
+    const cleanups: Array<() => void> = [];
+    const bindResize = (el: HTMLElement | null, dir: 'r' | 'b' | 'br') => {
+      if (!el) return;
+      let startX = 0;
+      let startY = 0;
+      let initW = 390;
+      let initH = 480;
 
-    const applyDelta = (cx: number, cy: number) => {
-      const dx = cx - startX;
-      const dy = cy - startY;
-      if (effectiveMode === 'D') {
-        setHeightD(Math.max(180, Math.min(760, initH + dy)));
-        return;
-      }
-      setSizeC({
-        w: dir === 'r' || dir === 'br' ? Math.max(280, Math.min(window.innerWidth - 12, initW + dx)) : initW,
-        h: dir === 'b' || dir === 'br' ? Math.max(220, Math.min(window.innerHeight - 24, initH + dy)) : initH,
-      });
+      cleanups.push(
+        attachLongPressGesture({
+          el,
+          onActivate: (cx, cy) => {
+            startX = cx;
+            startY = cy;
+            const rect = panelRef.current?.getBoundingClientRect();
+            initW = rect?.width || sizeCRef.current.w;
+            initH = rect?.height || (effectiveModeRef.current === 'D' ? heightDRef.current : sizeCRef.current.h);
+            setIsResizing(true);
+          },
+          onMove: (cx, cy) => {
+            const dx = cx - startX;
+            const dy = cy - startY;
+            if (effectiveModeRef.current === 'D' && !isFullscreenRef.current) {
+              setHeightD(Math.max(180, Math.min(760, Math.round(initH + dy))));
+              return;
+            }
+            const curX = posRef.current.x;
+            const maxAllowedW = Math.max(240, window.innerWidth - Math.max(6, curX) - 6);
+            setSizeC({
+              w:
+                dir === 'r' || dir === 'br'
+                  ? Math.round(Math.max(240, Math.min(maxAllowedW, initW + dx)))
+                  : Math.round(initW),
+              h:
+                dir === 'b' || dir === 'br'
+                  ? Math.round(Math.max(200, Math.min(window.innerHeight - 24, initH + dy)))
+                  : Math.round(initH),
+            });
+          },
+          onEnd: () => {
+            setIsResizing(false);
+          },
+        }),
+      );
     };
-    const onMouseMove = (ev: MouseEvent) => applyDelta(ev.clientX, ev.clientY);
-    const onTouchMove = (ev: TouchEvent) => {
-      if (ev.cancelable) ev.preventDefault();
-      ev.stopPropagation();
-      if (ev.touches[0]) applyDelta(ev.touches[0].clientX, ev.touches[0].clientY);
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onUp);
-      window.removeEventListener('touchmove', onTouchMove);
-      window.removeEventListener('touchend', onUp);
-      window.removeEventListener('touchcancel', onUp);
-    };
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onUp);
-    window.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('touchend', onUp);
-    window.addEventListener('touchcancel', onUp);
-  };
 
-  const startResize = (dir: 'r' | 'b' | 'br') => (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    beginResizeAt(dir, e.clientX, e.clientY);
-  };
+    bindResize(resizeRRef.current, 'r');
+    bindResize(resizeBRef.current, 'b');
+    bindResize(resizeBrRef.current, 'br');
 
-  const startResizeTouch = (dir: 'r' | 'b' | 'br') => (e: React.TouchEvent) => {
-    if (e.cancelable) e.preventDefault();
-    e.stopPropagation();
-    if (e.touches[0]) beginResizeAt(dir, e.touches[0].clientX, e.touches[0].clientY);
-  };
+    return () => {
+      for (const fn of cleanups) fn();
+    };
+  }, [effectiveMode, dragFloatOverride]);
 
   // 生词本操作
   const isWordInVocab = useCallback(
@@ -1927,27 +1960,25 @@ export const ShadowingPanel: React.FC<ShadowingPanelProps> = ({
           </button>
         </div>
 
-        {/* 窗口尺寸拖拽手柄（支持鼠标与触屏拖拽） */}
-        {effectiveMode === 'C' && (
+        {/* 窗口尺寸拖拽手柄（长按后支持鼠标与触屏拖拽调整大小） */}
+        {renderAsFloatingC && (
           <>
-            <div className="sh-resize-r" onMouseDown={startResize('r')} onTouchStart={startResizeTouch('r')} />
-            <div className="sh-resize-b" onMouseDown={startResize('b')} onTouchStart={startResizeTouch('b')} />
+            <div ref={resizeRRef} className="sh-resize-r" />
+            <div ref={resizeBRef} className="sh-resize-b" />
             <div
-              className="sh-resize-br"
-              onMouseDown={startResize('br')}
-              onTouchStart={startResizeTouch('br')}
-              title="拖动调整窗口大小"
+              ref={resizeBrRef}
+              className={`sh-resize-br ${isResizing ? 'sh-resizing' : ''}`}
+              title="长按右下角「◢」后拖动调整窗口大小"
             >
               ◢
             </div>
           </>
         )}
-        {effectiveMode === 'D' && (
+        {!renderAsFloatingC && (
           <div
+            ref={resizeBRef}
             className="sh-resize-b"
-            onMouseDown={startResize('b')}
-            onTouchStart={startResizeTouch('b')}
-            title="上下拖动调整面板高度"
+            title="长按底部边缘上下拖动调整面板高度"
           />
         )}
       </div>

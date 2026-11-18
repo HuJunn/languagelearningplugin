@@ -5,8 +5,8 @@
 ## 一、构建产物与平板存储路径
 
 - **电脑端源码与打包目录**：`E:\antigravitytest\Android适配`
-  - **Edge Canary 签名扩展包 (`.crx`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing-android-v<version>.crx`（发布目录仅保留当前最新版 `releases/android/yt-shadowing-android-v0.2.4.crx`）
-  - **通用压缩扩展包 (`.zip`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing-android-v<version>.zip`（发布目录 `releases/android/yt-shadowing-android-v0.2.4.zip`）
+  - **Edge Canary 签名扩展包 (`.crx`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing-android-v<version>.crx`（发布目录仅保留当前最新版 `releases/android/yt-shadowing-android-v0.2.5.crx`）
+  - **通用压缩扩展包 (`.zip`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing-android-v<version>.zip`（发布目录 `releases/android/yt-shadowing-android-v0.2.5.zip`）
   - **解压版目录**：`E:\antigravitytest\Android适配\.output\edge-mv3`
   - **Extension ID**：`lhdmcaldclifffhakehnlhechjmhjkii`
 - **平板端 (jun 的 Tab S10+) 目标目录**：
@@ -29,7 +29,7 @@
 
 2. **平板/手机触屏手势与 `m.youtube.com` 适配**
    - 同时支持 `www.youtube.com`（平板桌面模式）与 `m.youtube.com`（移动网页模式）。
-   - **方案 C（悬浮窗）** 仅支持长按 `🗣 口语跟读` 标签后触发拖拽（使用原生 non-passive 触摸与捕获阶段事件，彻底隔离开网页滚动），支持自由调整窗口位置。
+   - **方案 C（悬浮窗）** 支持长按 `🗣 口语跟读` 标签拖动面板位置，及长按右下角 `◢` 调整窗口大小（均使用原生 non-passive 触摸与捕获阶段事件，彻底隔离开网页滚动）。
    - **正在播放的句子始终保持在插件列表正中央**，首尾句带动态居中留白。
 
 ---
@@ -39,4 +39,4 @@
 1. 打开平板上的 **Microsoft Edge Canary**。
 2. 进入 **设置 (Settings) → 关于 Microsoft Edge (About Microsoft Edge)**，连续点击底部的 **Edge 版本号 5 次**，开启开发者选项。
 3. 返回设置页，进入 **Developer options（开发者选项）**。
-4. 点击 **Extension install by .crx**，选择平板 `/sdcard/Androiddevelopment/languageplugin/yt-shadowing-android-v0.2.4.crx` 即可完成安装。
+4. 点击 **Extension install by .crx**，选择平板 `/sdcard/Androiddevelopment/languageplugin/yt-shadowing-android-v0.2.5.crx` 即可完成安装。

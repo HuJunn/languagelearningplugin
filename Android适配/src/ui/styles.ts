@@ -448,21 +448,30 @@ export const PANEL_CSS = `
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 24px;
-  height: 24px;
+  z-index: 6;
+  width: 28px;
+  height: 28px;
   cursor: nwse-resize;
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
-  padding: 3px;
+  padding: 4px;
   color: var(--sh-muted);
-  font-size: 11px;
-  opacity: 0.65;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.72;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
 }
-.sh-resize-br:hover {
+.sh-resize-br:hover,
+.sh-resize-br.sh-resizing {
   opacity: 1;
   color: var(--sh-accent);
+  background: rgba(56, 189, 248, 0.22);
+  border-top-left-radius: 8px;
 }
 
 /* Word Popover */

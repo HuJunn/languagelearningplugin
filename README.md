@@ -11,8 +11,8 @@
 | 平台版本 | 适用设备与浏览器 | 直接下载安装包 | 对应源码目录 |
 | :--- | :--- | :--- | :--- |
 | **💻 桌面版 (Desktop `v0.1.9`)** | Windows / macOS / Linux<br>Microsoft Edge · Google Chrome | 👉 [**`yt-shadowing-desktop-v0.1.9.zip`**](./releases/desktop/yt-shadowing-desktop-v0.1.9.zip) | [`./口语插件`](./口语插件) |
-| **📱 手机/平板版 (Android CRX `v0.2.4`)** | Android 手机 / 平板（如 Galaxy Tab S10+）<br>**Microsoft Edge Canary (安卓版)** | 👉 [**`yt-shadowing-android-v0.2.4.crx`**](./releases/android/yt-shadowing-android-v0.2.4.crx)<br>*(支持通过 [`updates.xml`](./releases/android/updates.xml) 自动更新)* | [`./Android适配`](./Android适配) |
-| **📱 手机/平板版 (Android ZIP `v0.2.4`)** | Android 手机 / 平板<br>**狐猴浏览器 (Lemur Browser)** | 👉 [**`yt-shadowing-android-v0.2.4.zip`**](./releases/android/yt-shadowing-android-v0.2.4.zip) | [`./Android适配`](./Android适配) |
+| **📱 手机/平板版 (Android CRX `v0.2.5`)** | Android 手机 / 平板（如 Galaxy Tab S10+）<br>**Microsoft Edge Canary (安卓版)** | 👉 [**`yt-shadowing-android-v0.2.5.crx`**](./releases/android/yt-shadowing-android-v0.2.5.crx)<br>*(支持通过 [`updates.xml`](./releases/android/updates.xml) 自动更新)* | [`./Android适配`](./Android适配) |
+| **📱 手机/平板版 (Android ZIP `v0.2.5`)** | Android 手机 / 平板<br>**狐猴浏览器 (Lemur Browser)** | 👉 [**`yt-shadowing-android-v0.2.5.zip`**](./releases/android/yt-shadowing-android-v0.2.5.zip) | [`./Android适配`](./Android适配) |
 
 ---
 
@@ -29,15 +29,15 @@
 ### 📱 手机 / 平板版安装步骤（Android）
 
 #### 方式 A：Microsoft Edge Canary 安卓版（推荐，内核最新，支持自动更新）
-1. 下载上表中的 [**`releases/android/yt-shadowing-android-v0.2.4.crx`**](./releases/android/yt-shadowing-android-v0.2.4.crx) 到手机/平板存储中（例如 `/sdcard/Androiddevelopment/languageplugin/`）。
+1. 下载上表中的 [**`releases/android/yt-shadowing-android-v0.2.5.crx`**](./releases/android/yt-shadowing-android-v0.2.5.crx) 到手机/平板存储中（例如 `/sdcard/Androiddevelopment/languageplugin/`）。
 2. 打开安卓端 **Microsoft Edge Canary**，进入 **设置 (Settings) → 关于 Microsoft Edge (About Microsoft Edge)**。
 3. 连续点击底部的 **Edge 版本号 5 次**，激活开发者选项。
 4. 返回上一级设置页面，进入 **Developer options（开发者选项）**。
-5. 点击 **Extension install by .crx**，选择下载好的 `yt-shadowing-android-v0.2.4.crx` 即可完成安装（Extension ID: `lhdmcaldclifffhakehnlhechjmhjkii`）。
+5. 点击 **Extension install by .crx**，选择下载好的 `yt-shadowing-android-v0.2.5.crx` 即可完成安装（Extension ID: `lhdmcaldclifffhakehnlhechjmhjkii`）。
 6. **后续自动更新与手动检查**：由于内置了指向本仓库 [`releases/android/updates.xml`](./releases/android/updates.xml) 的 `update_url`，浏览器会定期自动更新；也可随时点击面板顶部版本号徽标检查新版（有新版才跳转最新 `yt-shadowing-android-v0.x.x.crx` 下载，已是最新则停留在当前页提示）。
 
 #### 方式 B：狐猴浏览器 (Lemur Browser)
-1. 下载上表中的 [**`releases/android/yt-shadowing-android-v0.2.4.zip`**](./releases/android/yt-shadowing-android-v0.2.4.zip)（或 `.crx`）。
+1. 下载上表中的 [**`releases/android/yt-shadowing-android-v0.2.5.zip`**](./releases/android/yt-shadowing-android-v0.2.5.zip)（或 `.crx`）。
 2. 打开狐猴浏览器扩展管理页（`chrome://extensions`），开启右上角「开发者模式」，点击「加载 `.zip` / `.crx`」选择该文件即可。
 
 ---
@@ -45,7 +45,7 @@
 ## ✨ 核心功能特性
 
 1. **双模式布局（方案 C & 方案 D）+ 全屏自动切换**
-   - **方案 C（悬浮可拖动窗）**：Android 端仅支持**长按顶部 `🗣 口语跟读` 标签**拖动面板位置（避免与页面滑动冲突），提供 `20% ~ 100%` **背景透明度滑块**。
+   - **方案 C（悬浮可拖动窗）**：Android 端支持**长按顶部 `🗣 口语跟读` 标签**拖动面板位置，以及**长按右下角 `◢`（或边缘）**调整窗口大小，提供 `20% ~ 100%` **背景透明度滑块**。
    - **方案 D（剧场模式 · 视频正下方）**：嵌入视频下方，宽屏显示长句不折行。
    - **全屏自动切换为 C**：进入视频全屏（Fullscreen）时自动切换为悬浮模式 C；退出全屏后自动恢复原模式。
 2. **居中歌词滚动 & 60fps 逐词颜色渐变**
