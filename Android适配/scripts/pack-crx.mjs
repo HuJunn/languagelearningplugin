@@ -102,11 +102,14 @@ headerLen.writeUInt32LE(crxHeader.length, 0);
 
 const crxBuf = Buffer.concat([magic, version, headerLen, crxHeader, zipBuf]);
 const versionedCrxName = `yt-shadowing-android-v${pkg.version}.crx`;
+const versionedZipName = `yt-shadowing-android-v${pkg.version}.zip`;
 const crxOut = path.join(OUT_DIR, 'yt-shadowing.crx');
 const versionedCrxOut = path.join(OUT_DIR, versionedCrxName);
+const versionedZipOut = path.join(OUT_DIR, versionedZipName);
 const zipCopy = path.join(OUT_DIR, 'yt-shadowing.zip');
 fs.writeFileSync(crxOut, crxBuf);
 fs.writeFileSync(versionedCrxOut, crxBuf);
+fs.copyFileSync(srcZip, versionedZipOut);
 if (srcZip !== zipCopy) fs.copyFileSync(srcZip, zipCopy);
 
 // Generate updates.xml for GitHub auto-update

@@ -13,9 +13,19 @@ export const ANDROID_UPDATES_XML_URL =
 export const DESKTOP_PACKAGE_JSON_URL =
   'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/%E5%8F%A3%E8%AF%AD%E6%8F%92%E4%BB%B6/package.json';
 export const ANDROID_CRX_DOWNLOAD_URL =
-  'https://github.com/HuJunn/languagelearningplugin/raw/main/releases/android/yt-shadowing-android.crx';
+  'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/android/yt-shadowing-android-v0.2.4.crx';
 export const DESKTOP_ZIP_DOWNLOAD_URL =
-  'https://github.com/HuJunn/languagelearningplugin/raw/main/releases/desktop/yt-shadowing-desktop.zip';
+  'https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/desktop/yt-shadowing-desktop-v0.1.9.zip';
+
+export function buildAndroidCrxDownloadUrl(version: string): string {
+  const v = version.replace(/^v/i, '').trim();
+  return `https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/android/yt-shadowing-android-v${v}.crx`;
+}
+
+export function buildDesktopZipDownloadUrl(version: string): string {
+  const v = version.replace(/^v/i, '').trim();
+  return `https://raw.githubusercontent.com/HuJunn/languagelearningplugin/main/releases/desktop/yt-shadowing-desktop-v${v}.zip`;
+}
 
 /** 比较语义化版本号：a > b 返回 1，a < b 返回 -1，相等返回 0 */
 export function compareSemver(a: string, b: string): number {
@@ -32,9 +42,12 @@ export function compareSemver(a: string, b: string): number {
 }
 
 export function parseAndroidUpdatesXml(xml: string): { version: string; codebase?: string } | null {
-  const verMatch = /version\s*=\s*['"]([^'"]+)['"]/i.exec(xml);
+  // 必须跳过顶部 `<?xml version='1.0' ...?>` 声明，仅提取 `<updatecheck ...>` 标签上的版本号与下载地址
+  const updateTagMatch = /<updatecheck\b([^>]*)/i.exec(xml);
+  const scope = updateTagMatch ? updateTagMatch[1] : xml.replace(/<\?xml[\s\S]*?\?>/gi, '');
+  const verMatch = /\bversion\s*=\s*['"]([^'"]+)['"]/i.exec(scope);
   if (!verMatch) return null;
-  const codeMatch = /codebase\s*=\s*['"]([^'"]+)['"]/i.exec(xml);
+  const codeMatch = /\bcodebase\s*=\s*['"]([^'"]+)['"]/i.exec(scope);
   return { version: verMatch[1].trim(), codebase: codeMatch?.[1]?.trim() };
 }
 
@@ -53,7 +66,7 @@ export async function checkGitHubUpdate(
       currentVersion,
       latestVersion: parsed.version,
       hasUpdate: compareSemver(parsed.version, currentVersion) > 0,
-      downloadUrl: ANDROID_CRX_DOWNLOAD_URL,
+      downloadUrl: parsed.codebase || buildAndroidCrxDownloadUrl(parsed.version),
       repoUrl: GITHUB_REPO_URL,
       platform,
     };
@@ -68,7 +81,7 @@ export async function checkGitHubUpdate(
     currentVersion,
     latestVersion,
     hasUpdate: compareSemver(latestVersion, currentVersion) > 0,
-    downloadUrl: DESKTOP_ZIP_DOWNLOAD_URL,
+    downloadUrl: buildDesktopZipDownloadUrl(latestVersion),
     repoUrl: GITHUB_REPO_URL,
     platform,
   };

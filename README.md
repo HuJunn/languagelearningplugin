@@ -10,15 +10,15 @@
 
 | 平台版本 | 适用设备与浏览器 | 直接下载安装包 | 对应源码目录 |
 | :--- | :--- | :--- | :--- |
-| **💻 桌面版 (Desktop `v0.1.8`)** | Windows / macOS / Linux<br>Microsoft Edge · Google Chrome | 👉 [**`yt-shadowing-desktop.zip`**](./releases/desktop/yt-shadowing-desktop.zip) | [`./口语插件`](./口语插件) |
-| **📱 手机/平板版 (Android CRX `v0.2.3`)** | Android 手机 / 平板（如 Galaxy Tab S10+）<br>**Microsoft Edge Canary (安卓版)** | 👉 [**`yt-shadowing-android-v0.2.3.crx`**](./releases/android/yt-shadowing-android-v0.2.3.crx)<br>*(支持通过 [`updates.xml`](./releases/android/updates.xml) 自动更新)* | [`./Android适配`](./Android适配) |
-| **📱 手机/平板版 (Android ZIP `v0.2.3`)** | Android 手机 / 平板<br>**狐猴浏览器 (Lemur Browser)** | 👉 [**`yt-shadowing-android.zip`**](./releases/android/yt-shadowing-android.zip) | [`./Android适配`](./Android适配) |
+| **💻 桌面版 (Desktop `v0.1.9`)** | Windows / macOS / Linux<br>Microsoft Edge · Google Chrome | 👉 [**`yt-shadowing-desktop-v0.1.9.zip`**](./releases/desktop/yt-shadowing-desktop-v0.1.9.zip) | [`./口语插件`](./口语插件) |
+| **📱 手机/平板版 (Android CRX `v0.2.4`)** | Android 手机 / 平板（如 Galaxy Tab S10+）<br>**Microsoft Edge Canary (安卓版)** | 👉 [**`yt-shadowing-android-v0.2.4.crx`**](./releases/android/yt-shadowing-android-v0.2.4.crx)<br>*(支持通过 [`updates.xml`](./releases/android/updates.xml) 自动更新)* | [`./Android适配`](./Android适配) |
+| **📱 手机/平板版 (Android ZIP `v0.2.4`)** | Android 手机 / 平板<br>**狐猴浏览器 (Lemur Browser)** | 👉 [**`yt-shadowing-android-v0.2.4.zip`**](./releases/android/yt-shadowing-android-v0.2.4.zip) | [`./Android适配`](./Android适配) |
 
 ---
 
 ### 💻 桌面版安装步骤（Edge / Chrome）
 
-1. 下载上表中的 [**`releases/desktop/yt-shadowing-desktop.zip`**](./releases/desktop/yt-shadowing-desktop.zip) 并解压到本地任意固定文件夹（如 `yt-shadowing-desktop`）。
+1. 下载上表中的 [**`releases/desktop/yt-shadowing-desktop-v0.1.9.zip`**](./releases/desktop/yt-shadowing-desktop-v0.1.9.zip) 并解压到本地任意固定文件夹（如 `yt-shadowing-desktop`）。
 2. 打开电脑端 Edge 浏览器，在地址栏输入 `edge://extensions/` 并回车。
 3. 打开左侧（或右上角）的 **「开发人员模式 (Developer mode)」**。
 4. 点击 **「加载解压缩的扩展 (Load unpacked)」**，选择刚才解压出来的文件夹即可。
@@ -29,15 +29,15 @@
 ### 📱 手机 / 平板版安装步骤（Android）
 
 #### 方式 A：Microsoft Edge Canary 安卓版（推荐，内核最新，支持自动更新）
-1. 下载上表中的 [**`releases/android/yt-shadowing-android-v0.2.3.crx`**](./releases/android/yt-shadowing-android-v0.2.3.crx) 到手机/平板存储中（例如 `/sdcard/Androiddevelopment/languageplugin/`）。
+1. 下载上表中的 [**`releases/android/yt-shadowing-android-v0.2.4.crx`**](./releases/android/yt-shadowing-android-v0.2.4.crx) 到手机/平板存储中（例如 `/sdcard/Androiddevelopment/languageplugin/`）。
 2. 打开安卓端 **Microsoft Edge Canary**，进入 **设置 (Settings) → 关于 Microsoft Edge (About Microsoft Edge)**。
 3. 连续点击底部的 **Edge 版本号 5 次**，激活开发者选项。
 4. 返回上一级设置页面，进入 **Developer options（开发者选项）**。
-5. 点击 **Extension install by .crx**，选择下载好的 `yt-shadowing-android-v0.2.3.crx` 即可完成安装（Extension ID: `lhdmcaldclifffhakehnlhechjmhjkii`）。
+5. 点击 **Extension install by .crx**，选择下载好的 `yt-shadowing-android-v0.2.4.crx` 即可完成安装（Extension ID: `lhdmcaldclifffhakehnlhechjmhjkii`）。
 6. **后续自动更新与手动检查**：由于内置了指向本仓库 [`releases/android/updates.xml`](./releases/android/updates.xml) 的 `update_url`，浏览器会定期自动更新；也可随时点击面板顶部版本号徽标检查新版（有新版才跳转最新 `yt-shadowing-android-v0.x.x.crx` 下载，已是最新则停留在当前页提示）。
 
 #### 方式 B：狐猴浏览器 (Lemur Browser)
-1. 下载上表中的 [**`releases/android/yt-shadowing-android.zip`**](./releases/android/yt-shadowing-android.zip)（或 `.crx`）。
+1. 下载上表中的 [**`releases/android/yt-shadowing-android-v0.2.4.zip`**](./releases/android/yt-shadowing-android-v0.2.4.zip)（或 `.crx`）。
 2. 打开狐猴浏览器扩展管理页（`chrome://extensions`），开启右上角「开发者模式」，点击「加载 `.zip` / `.crx`」选择该文件即可。
 
 ---
@@ -91,11 +91,11 @@ cd 口语插件
 npm install
 npm test          # 运行单元测试
 npm run build     # 构建解压版至 .output/edge-mv3
-npm run zip       # 打包桌面端 zip
+npm run zip       # 打包桌面端 yt-shadowing-<version>-edge.zip（发布至 releases/desktop/yt-shadowing-desktop-v<version>.zip）
 
 # 2. 构建 Android 手机/平板版（位于 ./Android适配）
 cd ../Android适配
 npm install
 npm test          # 运行单元测试
-npm run build:mobile  # 一键构建并签名生成 .output/yt-shadowing-android-v<version>.crx、yt-shadowing.zip 与 updates.xml
+npm run build:mobile  # 一键构建并签名生成 yt-shadowing-android-v<version>.crx、yt-shadowing-android-v<version>.zip 与 updates.xml
 ```

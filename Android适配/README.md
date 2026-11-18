@@ -5,8 +5,8 @@
 ## 一、构建产物与平板存储路径
 
 - **电脑端源码与打包目录**：`E:\antigravitytest\Android适配`
-  - **Edge Canary 签名扩展包 (`.crx`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing-android-v<version>.crx`（发布目录仅保留当前最新版 `releases/android/yt-shadowing-android-v0.2.3.crx`）
-  - **通用压缩扩展包 (`.zip`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing.zip`
+  - **Edge Canary 签名扩展包 (`.crx`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing-android-v<version>.crx`（发布目录仅保留当前最新版 `releases/android/yt-shadowing-android-v0.2.4.crx`）
+  - **通用压缩扩展包 (`.zip`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing-android-v<version>.zip`（发布目录 `releases/android/yt-shadowing-android-v0.2.4.zip`）
   - **解压版目录**：`E:\antigravitytest\Android适配\.output\edge-mv3`
   - **Extension ID**：`lhdmcaldclifffhakehnlhechjmhjkii`
 - **平板端 (jun 的 Tab S10+) 目标目录**：
@@ -39,4 +39,4 @@
 1. 打开平板上的 **Microsoft Edge Canary**。
 2. 进入 **设置 (Settings) → 关于 Microsoft Edge (About Microsoft Edge)**，连续点击底部的 **Edge 版本号 5 次**，开启开发者选项。
 3. 返回设置页，进入 **Developer options（开发者选项）**。
-4. 点击 **Extension install by .crx**，选择平板 `/sdcard/Androiddevelopment/languageplugin/yt-shadowing.crx` 即可完成安装。
+4. 点击 **Extension install by .crx**，选择平板 `/sdcard/Androiddevelopment/languageplugin/yt-shadowing-android-v0.2.4.crx` 即可完成安装。
