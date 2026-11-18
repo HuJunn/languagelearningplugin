@@ -5,7 +5,7 @@
 ## 一、构建产物与平板存储路径
 
 - **电脑端源码与打包目录**：`E:\antigravitytest\Android适配`
-  - **Edge Canary 签名扩展包 (`.crx`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing.crx`
+  - **Edge Canary 签名扩展包 (`.crx`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing-android-v<version>.crx`（发布目录仅保留当前最新版 `releases/android/yt-shadowing-android-v0.2.3.crx`）
   - **通用压缩扩展包 (`.zip`)**：`E:\antigravitytest\Android适配\.output\yt-shadowing.zip`
   - **解压版目录**：`E:\antigravitytest\Android适配\.output\edge-mv3`
   - **Extension ID**：`lhdmcaldclifffhakehnlhechjmhjkii`
@@ -29,7 +29,7 @@
 
 2. **平板/手机触屏手势与 `m.youtube.com` 适配**
    - 同时支持 `www.youtube.com`（平板桌面模式）与 `m.youtube.com`（移动网页模式）。
-   - **方案 C（悬浮窗）** 标题栏与右下角缩放手柄 `◢` 均已加入原生触屏事件（`touchstart` / `touchmove`），支持手指或 S-Pen 直接拖动窗口位置与调整大小。
+   - **方案 C（悬浮窗）** 仅支持长按 `🗣 口语跟读` 标签后触发拖拽（使用原生 non-passive 触摸与捕获阶段事件，彻底隔离开网页滚动），支持自由调整窗口位置。
    - **正在播放的句子始终保持在插件列表正中央**，首尾句带动态居中留白。
 
 ---
